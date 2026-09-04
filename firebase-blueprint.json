@@ -1,0 +1,134 @@
+{
+  "entities": {
+    "CustomMovie": {
+      "title": "CustomMovie",
+      "description": "Película o serie subida por los usuarios para visualización en streaming.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identificador único de la película o serie"
+        },
+        "contentType": {
+          "type": "string",
+          "description": "Tipo de contenido: movie o series"
+        },
+        "title": {
+          "type": "string",
+          "description": "Título principal del contenido"
+        },
+        "originalTitle": {
+          "type": "string",
+          "description": "Título original"
+        },
+        "year": {
+          "type": "number",
+          "description": "Año de estreno"
+        },
+        "duration": {
+          "type": "number",
+          "description": "Duración aproximada en minutos"
+        },
+        "rating": {
+          "type": "number",
+          "description": "Puntuación de 0 a 10"
+        },
+        "ageRating": {
+          "type": "string",
+          "description": "Clasificación de edad (ej. +13, +18, Todo Público)"
+        },
+        "genres": {
+          "type": "array",
+          "description": "Lista de géneros"
+        },
+        "director": {
+          "type": "string",
+          "description": "Director o creador"
+        },
+        "cast": {
+          "type": "array",
+          "description": "Elenco principal"
+        },
+        "synopsis": {
+          "type": "string",
+          "description": "Sinopsis de la obra"
+        },
+        "posterUrl": {
+          "type": "string",
+          "description": "URL del póster vertical"
+        },
+        "backdropUrl": {
+          "type": "string",
+          "description": "URL del fondo panorámico"
+        },
+        "videoUrl": {
+          "type": "string",
+          "description": "URL directa de video streaming"
+        },
+        "quality": {
+          "type": "string",
+          "description": "Calidad del video"
+        },
+        "viewsCount": {
+          "type": "number",
+          "description": "Contador de reproducciones"
+        },
+        "addedByUser": {
+          "type": "boolean",
+          "description": "Indica si fue subido por un usuario"
+        }
+      },
+      "required": ["id", "title"]
+    },
+    "MovieReview": {
+      "title": "MovieReview",
+      "description": "Reseña o comentario de un usuario sobre una película o serie.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID único de la reseña"
+        },
+        "movieId": {
+          "type": "string",
+          "description": "ID de la película asociada"
+        },
+        "userName": {
+          "type": "string",
+          "description": "Nombre del usuario"
+        },
+        "userAvatar": {
+          "type": "string",
+          "description": "Avatar del usuario"
+        },
+        "rating": {
+          "type": "number",
+          "description": "Calificación de 1 a 5 estrellas"
+        },
+        "comment": {
+          "type": "string",
+          "description": "Texto del comentario"
+        },
+        "date": {
+          "type": "string",
+          "description": "Fecha del comentario"
+        }
+      },
+      "required": ["id", "movieId", "rating", "comment"]
+    }
+  },
+  "firestore": {
+    "/custom_movies/{movieId}": {
+      "schema": {
+        "$ref": "#/entities/CustomMovie"
+      },
+      "description": "Colección de películas y series subidas"
+    },
+    "/movie_reviews/{reviewId}": {
+      "schema": {
+        "$ref": "#/entities/MovieReview"
+      },
+      "description": "Colección de reseñas enviadas por los usuarios"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "CineStream - Ver Películas Online",
+  "description": "Plataforma para ver y subir películas y series completas con reproductor integrado, gestión de episodios y exportación directa en ZIP lista para Vercel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

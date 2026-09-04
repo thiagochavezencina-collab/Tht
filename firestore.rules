@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Community-submitted custom movies: readable and writable by users
+    match /custom_movies/{movieId} {
+      allow read, write: if true;
+    }
+    
+    // User-submitted movie reviews
+    match /movie_reviews/{reviewId} {
+      allow read, write: if true;
+    }
+  }
+}
