@@ -15,6 +15,9 @@ import {
   Film,
   Pencil,
   Trash2,
+  Smartphone,
+  Upload,
+  Globe,
 } from 'lucide-react';
 import { Movie, UserReview, WatchProgress } from '../types';
 
@@ -192,6 +195,35 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Notice if movie is only stored locally on mobile */}
+          {movie.hasLocalFile && !movie.videoUrl && (
+            <div className="p-4 rounded-2xl bg-amber-950/40 border border-amber-500/40 text-amber-200 text-xs sm:text-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <Smartphone className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold block text-white text-sm">
+                    Video subido desde celular ({movie.fileName || 'archivo local'})
+                  </span>
+                  <p className="text-zinc-400 text-xs mt-0.5">
+                    Este archivo reside en la memoria de tu celular. Para que todos puedan reproducirla en esta laptop o cualquier equipo sin descargarla, asigna un enlace en la nube (Google Drive o YouTube).
+                  </p>
+                </div>
+              </div>
+              {onEdit && (
+                <button
+                  onClick={() => {
+                    onEdit(movie);
+                    onClose();
+                  }}
+                  className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-lg transition-all"
+                >
+                  <Globe className="w-4 h-4" />
+                  <span>Vincular Nube (Google Drive)</span>
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Synopsis */}
           <div>

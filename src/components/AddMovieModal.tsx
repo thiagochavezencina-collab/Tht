@@ -9,7 +9,8 @@ import {
   CheckCircle2,
   Plus,
   Trash2,
-  ListVideo
+  ListVideo,
+  Globe,
 } from 'lucide-react';
 import { Movie, Episode, MediaContentType } from '../types';
 import { saveVideoBlob } from '../utils/videoStorage';
@@ -271,49 +272,77 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({ onClose, onAddMovi
           {/* If movie: Single Video Source */}
           {contentType === 'movie' ? (
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-semibold text-zinc-300">
-                  Origen del Video *
-                </label>
-                <div className="flex items-center gap-2 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setSourceType('url')}
-                    className={`px-2.5 py-1 rounded-lg border ${
-                      sourceType === 'url'
-                        ? 'bg-zinc-800 text-white border-zinc-600'
-                        : 'text-zinc-400 border-zinc-800'
-                    }`}
-                  >
-                    Enlace URL
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSourceType('file')}
-                    className={`px-2.5 py-1 rounded-lg border ${
-                      sourceType === 'file'
-                        ? 'bg-zinc-800 text-white border-zinc-600'
-                        : 'text-zinc-400 border-zinc-800'
-                    }`}
-                  >
-                    Archivo Local
-                  </button>
-                </div>
+              <label className="block text-xs font-semibold text-zinc-300 mb-2">
+                ¿Cómo deseas reproducir el video? *
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+                <button
+                  type="button"
+                  onClick={() => setSourceType('url')}
+                  className={`p-3 rounded-2xl border text-left transition-all ${
+                    sourceType === 'url'
+                      ? 'bg-rose-950/40 border-rose-500 text-white shadow-lg shadow-rose-950/40 ring-1 ring-rose-500'
+                      : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-bold text-xs text-rose-400">
+                    <Globe className="w-4 h-4" />
+                    <span>Enlace en la Nube (Para Todos)</span>
+                  </div>
+                  <span className="text-[11px] text-zinc-300 block mt-1 leading-snug">
+                    🌟 <strong>Recomendado:</strong> Se reproduce en streaming para todos en cualquier laptop, celular o TV sin descargar nada (como YouTube o Netflix).
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSourceType('file')}
+                  className={`p-3 rounded-2xl border text-left transition-all ${
+                    sourceType === 'file'
+                      ? 'bg-rose-950/40 border-rose-500 text-white shadow-lg shadow-rose-950/40 ring-1 ring-rose-500'
+                      : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-bold text-xs text-zinc-300">
+                    <Upload className="w-4 h-4" />
+                    <span>Archivo de este Dispositivo</span>
+                  </div>
+                  <span className="text-[11px] text-zinc-400 block mt-1 leading-snug">
+                    ⚠️ Se almacena solo en la memoria interna de este equipo (no viaja por la nube a otras computadoras).
+                  </span>
+                </button>
               </div>
 
               {sourceType === 'url' ? (
-                <div className="relative">
+                <div className="space-y-2">
                   <input
                     type="url"
                     required
                     value={videoUrl}
                     onChange={(e) => setVideoUrl(e.target.value)}
-                    placeholder="YouTube, Google Drive, Vimeo, MP4 directo o embebido..."
+                    placeholder="Pega aquí el enlace de Google Drive, YouTube, Vimeo o enlace directo MP4..."
                     className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-rose-500"
                   />
-                  <p className="text-[11px] text-zinc-400 mt-1">
-                    Compatible con enlaces de <strong className="text-zinc-200">YouTube</strong>, <strong className="text-zinc-200">Google Drive</strong>, <strong className="text-zinc-200">Vimeo</strong>, <strong className="text-zinc-200">MP4 directo</strong> o URLs embebidas.
-                  </p>
+                  
+                  {/* Google Drive / YouTube helper banner */}
+                  <div className="p-3 bg-zinc-950/90 rounded-xl border border-zinc-800 text-xs text-zinc-300 space-y-1.5">
+                    <p className="font-semibold text-rose-400 flex items-center gap-1.5 text-xs">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>¿Cómo subir tu película para que todos la vean en streaming?</span>
+                    </p>
+                    <ul className="text-[11px] text-zinc-400 space-y-1 list-disc list-inside">
+                      <li>
+                        <strong className="text-zinc-200">Google Drive:</strong> Sube tu archivo a Google Drive &gt; Clic en <em>Compartir</em> &gt; Cambiar a <em>"Cualquier persona con el enlace"</em> &gt; Copia y pega el enlace aquí.
+                      </li>
+                      <li>
+                        <strong className="text-zinc-200">YouTube:</strong> Sube tu video a YouTube como <em>"Oculto / Unlisted"</em> (así nadie lo busca, solo tu web) &gt; Pega el enlace aquí.
+                      </li>
+                      <li>
+                        <strong className="text-zinc-200">Enlace directo:</strong> Cualquier URL pública que termine en <code>.mp4</code> o servicio de streaming.
+                      </li>
+                    </ul>
+                  </div>
                 </div>
               ) : (
                 <div>

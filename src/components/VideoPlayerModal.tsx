@@ -509,25 +509,27 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         ) : (
           /* RENDER CASE 2: Native HTML5 Video Element with Full Controls & Minute Bar */
           <div className="w-full h-full relative flex items-center justify-center bg-black">
-            <video
-              ref={videoRef}
-              src={playableVideoUrl}
-              className="w-full h-full object-contain cursor-pointer"
-              playsInline
-              onTimeUpdate={handleTimeUpdate}
-              onLoadedMetadata={handleLoadedMetadata}
-              onError={handleVideoError}
-              onEnded={() => {
-                setIsPlaying(false);
-                setHasEnded(true);
-                setAreControlsVisible(true);
-              }}
-              onClick={togglePlay}
-            />
+            {playableVideoUrl && !hasVideoError && (
+              <video
+                ref={videoRef}
+                src={playableVideoUrl}
+                className="w-full h-full object-contain cursor-pointer"
+                playsInline
+                onTimeUpdate={handleTimeUpdate}
+                onLoadedMetadata={handleLoadedMetadata}
+                onError={handleVideoError}
+                onEnded={() => {
+                  setIsPlaying(false);
+                  setHasEnded(true);
+                  setAreControlsVisible(true);
+                }}
+                onClick={togglePlay}
+              />
+            )}
 
             {/* Resolution / Source Selection Overlay (If error, missing URL, or requested by user) */}
             {(hasVideoError || showSourceModal || !playableVideoUrl) && (
-              <div className="absolute inset-0 bg-zinc-950/95 backdrop-blur-lg z-35 flex flex-col items-center justify-center p-4 sm:p-6 overflow-y-auto animate-fade-in text-center">
+              <div className="absolute inset-0 bg-zinc-950/95 backdrop-blur-lg z-50 flex flex-col items-center justify-center p-4 sm:p-6 overflow-y-auto animate-fade-in text-center">
                 <div className="max-w-xl w-full bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 sm:p-6 shadow-2xl relative text-left">
                   {/* Close button if user manually opened source modal and video is playable */}
                   {showSourceModal && playableVideoUrl && !hasVideoError && (

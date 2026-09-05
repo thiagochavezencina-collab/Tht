@@ -226,6 +226,14 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
               <Link2 className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-3" />
             </div>
 
+            {/* Cloud streaming guidance */}
+            <div className="p-2.5 rounded-xl bg-zinc-950/80 border border-zinc-800 text-[11px] text-zinc-400 space-y-1">
+              <span className="font-semibold text-rose-400 block">💡 Para que todos la vean en streaming (como YouTube):</span>
+              <p>
+                Sube tu archivo a <strong>Google Drive</strong>, ponlo en <em>Compartir &gt; Cualquier persona con el enlace</em> y pega el enlace aquí. ¡Funcionará en cualquier computadora o celular sin descargar nada!
+              </p>
+            </div>
+
             <div className="flex items-center gap-2">
               <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-950 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white text-xs font-medium cursor-pointer transition-colors">
                 <Upload className="w-3.5 h-3.5 text-rose-400" />
