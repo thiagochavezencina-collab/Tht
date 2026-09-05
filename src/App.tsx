@@ -27,6 +27,7 @@ import { MiniPlayer } from './components/MiniPlayer';
 import { MovieDetailModal } from './components/MovieDetailModal';
 import { AddMovieModal } from './components/AddMovieModal';
 import { EditMovieModal } from './components/EditMovieModal';
+import { OfflineIndicator } from './components/OfflineIndicator';
 import {
   saveMovieToFirestore,
   updateMovieInFirestore,
@@ -495,7 +496,7 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-rose-500 selection:text-white">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-rose-500 selection:text-white w-full max-w-full overflow-x-hidden relative">
       {/* Navigation Bar */}
       <Navbar
         activeTab={activeTab}
@@ -1104,6 +1105,9 @@ export default function App() {
           <span className="text-xs sm:text-sm font-medium leading-snug">{toastMessage}</span>
         </div>
       )}
+
+      {/* PWA Offline Mode Network Banner */}
+      <OfflineIndicator />
     </div>
   );
 }

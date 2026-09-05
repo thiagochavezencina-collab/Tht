@@ -40,6 +40,7 @@ export async function downloadProjectZip(): Promise<void> {
       "@vitejs/plugin-react": "^5.0.4",
       "file-saver": "^2.0.5",
       "firebase": "^12.18.0",
+      "hls.js": "^1.7.2",
       "jszip": "^3.10.1",
       "lucide-react": "^0.546.0",
       "motion": "^12.23.24",
@@ -51,7 +52,8 @@ export async function downloadProjectZip(): Promise<void> {
     "devDependencies": {
       "@types/file-saver": "^2.0.7",
       "@types/node": "^22.14.0",
-      "typescript": "~5.8.2"
+      "typescript": "~5.8.2",
+      "vite-plugin-pwa": "^1.2.0"
     },
     "engines": {
       "node": ">=18.0.0"

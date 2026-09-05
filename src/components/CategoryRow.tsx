@@ -78,8 +78,8 @@ export const CategoryRow: React.FC<CategoryRowProps> = ({
       {/* Carousel list */}
       <div
         ref={rowRef}
-        className="flex gap-4 overflow-x-auto scrollbar-none px-4 sm:px-6 lg:px-8 pb-4 pt-1 scroll-smooth"
-        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+        className="flex gap-3 sm:gap-4 overflow-x-auto scrollbar-none px-4 sm:px-6 lg:px-8 pb-4 pt-1 scroll-smooth overscroll-x-contain touch-pan-x horizontal-scroll-container"
+        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', overscrollBehaviorX: 'contain' }}
       >
         {movies.map((movie) => (
           <div key={movie.id} className="w-44 sm:w-52 shrink-0">

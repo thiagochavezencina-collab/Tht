@@ -28,6 +28,7 @@ import {
   Cloud,
   Check,
   Search,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Movie, PlayerMode, Episode } from '../types';
 import { parseVideoSource } from '../utils/videoHelper';
@@ -153,6 +154,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [showSubtitlesMenu, setShowSubtitlesMenu] = useState(false);
+  const [showMobileSettingsModal, setShowMobileSettingsModal] = useState(false);
   const [selectedSubtitle, setSelectedSubtitle] = useState<string>('es');
   const [currentSubtitleText, setCurrentSubtitleText] = useState<string>('');
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -161,6 +163,12 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverPosition, setHoverPosition] = useState<number>(0);
   const [hasEnded, setHasEnded] = useState(false);
+  const [doubleTapFeedback, setDoubleTapFeedback] = useState<{
+    side: 'left' | 'right';
+    id: number;
+  } | null>(null);
+  const lastTapRef = useRef<{ time: number; x: number }>({ time: 0, x: 0 });
+  const singleTapTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [resumeToast, setResumeToast] = useState<string | null>(
     initialTime > 5 ? `Continuando desde ${formatTime(initialTime)}` : null
   );
@@ -197,20 +205,29 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           }
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = playableVideoUrl;
+        if (video.src !== playableVideoUrl) {
+          video.src = playableVideoUrl;
+        }
       }
     } else {
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
-      video.src = playableVideoUrl;
+      if (video.src !== playableVideoUrl) {
+        video.src = playableVideoUrl;
+      }
     }
 
     return () => {
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
+      }
+      if (video) {
+        try {
+          video.pause();
+        } catch {}
       }
     };
   }, [playableVideoUrl, isEmbedSource]);
@@ -381,8 +398,14 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const togglePlay = () => {
     if (!videoRef.current) return;
     if (videoRef.current.paused || videoRef.current.ended) {
-      videoRef.current.play();
-      setIsPlaying(true);
+      const playPromise = videoRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => setIsPlaying(true))
+          .catch(() => {
+            setIsPlaying(false);
+          });
+      }
     } else {
       videoRef.current.pause();
       setIsPlaying(false);
@@ -535,6 +558,45 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     }
   }, [resumeToast]);
 
+  // Handle single tap (toggle controls) and double tap (skip 10s backward/forward) on mobile
+  const handleVideoTap = (e: React.MouseEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('button, a, input')) return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const tapX = e.clientX - rect.left;
+    const isLeftSide = tapX < rect.width / 2;
+    const now = Date.now();
+
+    if (now - lastTapRef.current.time < 320) {
+      if (singleTapTimerRef.current) {
+        clearTimeout(singleTapTimerRef.current);
+        singleTapTimerRef.current = null;
+      }
+      if (isLeftSide) {
+        handleSkip(-10);
+        setDoubleTapFeedback({ side: 'left', id: now });
+      } else {
+        handleSkip(10);
+        setDoubleTapFeedback({ side: 'right', id: now });
+      }
+      setTimeout(() => setDoubleTapFeedback(null), 750);
+      lastTapRef.current = { time: 0, x: 0 };
+      return;
+    }
+
+    lastTapRef.current = { time: now, x: tapX };
+
+    singleTapTimerRef.current = setTimeout(() => {
+      if (areControlsVisible) {
+        setAreControlsVisible(false);
+        setShowSpeedMenu(false);
+        setShowSubtitlesMenu(false);
+      } else {
+        showControlsTemporarily();
+      }
+    }, 280);
+  };
+
   const progressPercent = duration ? (currentTime / duration) * 100 : 0;
   const isUsingEmbed = isEmbedSource;
 
@@ -561,7 +623,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         className={`relative w-full overflow-hidden bg-black shadow-2xl transition-all duration-300 ${
           isTheaterMode || isFullscreen
             ? 'h-full w-full rounded-none'
-            : 'max-w-6xl aspect-video max-h-[85vh] rounded-2xl border border-zinc-800/80 shadow-rose-950/20'
+            : 'h-full sm:h-auto max-w-6xl aspect-auto sm:aspect-video sm:max-h-[85vh] rounded-none sm:rounded-2xl border-0 sm:border border-zinc-800/80 shadow-rose-950/20'
         }`}
       >
         {/* RENDER CASE 1: External Platform Embed (YouTube, Vimeo, Google Drive, Dailymotion) */}
@@ -577,7 +639,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           </div>
         ) : (
           /* RENDER CASE 2: Native HTML5 Video Element with Full Controls & Minute Bar */
-          <div className="w-full h-full relative flex items-center justify-center bg-black">
+          <div
+            onClick={handleVideoTap}
+            className="w-full h-full relative flex items-center justify-center bg-black cursor-pointer select-none"
+          >
             {playableVideoUrl && !hasVideoError && (
               <>
                 <video
@@ -587,7 +652,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                       ? undefined
                       : playableVideoUrl
                   }
-                  className="w-full h-full object-contain cursor-pointer"
+                  className="w-full h-full object-contain pointer-events-none"
                   playsInline
                   preload="auto"
                   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -613,8 +678,21 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                     setHasEnded(true);
                     setAreControlsVisible(true);
                   }}
-                  onClick={togglePlay}
                 />
+
+                {/* Double-Tap 10s Feedback Animation Ripples for Mobile */}
+                {doubleTapFeedback?.side === 'left' && (
+                  <div className="absolute left-6 sm:left-12 top-1/2 -translate-y-1/2 z-25 bg-black/70 backdrop-blur-md px-4 py-3 rounded-full flex items-center gap-2 text-white font-bold text-sm border border-rose-500/30 animate-pulse pointer-events-none shadow-2xl">
+                    <RotateCcw className="w-5 h-5 text-rose-400" />
+                    <span>-10s</span>
+                  </div>
+                )}
+                {doubleTapFeedback?.side === 'right' && (
+                  <div className="absolute right-6 sm:right-12 top-1/2 -translate-y-1/2 z-25 bg-black/70 backdrop-blur-md px-4 py-3 rounded-full flex items-center gap-2 text-white font-bold text-sm border border-rose-500/30 animate-pulse pointer-events-none shadow-2xl">
+                    <span>+10s</span>
+                    <RotateCw className="w-5 h-5 text-rose-400" />
+                  </div>
+                )}
 
                 {/* Central Buffering Spinner (Crucial for 2GB videos loading metadata on mobile) */}
                 {isBuffering && (
@@ -891,16 +969,16 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
         {/* Top Control Bar */}
         <div
-          className={`absolute top-0 inset-x-0 p-4 bg-gradient-to-b from-black/90 via-black/50 to-transparent flex items-center justify-between z-30 transition-opacity duration-300 ${
+          className={`absolute top-0 inset-x-0 p-2.5 sm:p-4 bg-gradient-to-b from-black/95 via-black/60 to-transparent flex items-center justify-between z-30 transition-opacity duration-300 ${
             areControlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
           }`}
         >
-          <div className="flex items-center gap-3 truncate max-w-[70%]">
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-600 text-white tracking-wider">
+          <div className="flex items-center gap-2 sm:gap-3 truncate max-w-[48%] sm:max-w-[65%]">
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+              <span className="px-1.5 sm:px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-bold bg-rose-600 text-white tracking-wider">
                 {movie.contentType === 'series' ? 'SERIE' : movie.quality}
               </span>
-              <span className="px-1.5 py-0.5 rounded text-[11px] font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700">
+              <span className="hidden xs:inline px-1.5 py-0.5 rounded text-[10px] sm:text-[11px] font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700">
                 {movie.ageRating}
               </span>
             </div>
@@ -909,31 +987,41 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             </h2>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* Series Episodes Drawer Toggle */}
             {hasEpisodes && (
               <button
                 onClick={() => setShowEpisodesDrawer(!showEpisodesDrawer)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors ${
+                className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors min-h-[38px] ${
                   showEpisodesDrawer
-                    ? 'bg-rose-600 text-white'
+                    ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/50'
                     : 'bg-zinc-900/80 hover:bg-zinc-800 text-zinc-200 border border-zinc-700'
                 }`}
                 title="Lista de episodios"
               >
-                <ListVideo className="w-4 h-4" />
+                <ListVideo className="w-4 h-4 text-rose-400" />
                 <span className="hidden sm:inline">Episodios ({episodesList.length})</span>
+                <span className="sm:hidden text-[11px] font-bold">Eps</span>
               </button>
             )}
 
-            {/* Source switcher button */}
+            {/* Quick Settings on mobile */}
+            <button
+              onClick={() => setShowMobileSettingsModal(true)}
+              className="flex sm:hidden p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] items-center justify-center border border-zinc-700/60"
+              title="Ajustes y opciones de reproducción"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+            </button>
+
+            {/* Source switcher button (Desktop) */}
             <button
               onClick={() => setShowSourceModal(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors text-xs border border-zinc-700/60"
+              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors text-xs border border-zinc-700/60"
               title="Cambiar fuente de video o archivo local"
             >
               <Upload className="w-3.5 h-3.5 text-rose-400" />
-              <span className="hidden sm:inline">Fuente de Video</span>
+              <span>Fuente de Video</span>
             </button>
 
             {/* External link button */}
@@ -941,7 +1029,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               href={activeVideoUrl}
               target="_blank"
               rel="noreferrer"
-              className="p-2 rounded-xl bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors"
+              className="hidden sm:flex p-2 rounded-xl bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors"
               title="Abrir fuente de video en nueva pestaña"
             >
               <ExternalLink className="w-4 h-4" />
@@ -951,7 +1039,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             {!isUsingEmbed && (
               <button
                 onClick={handlePiP}
-                className="p-2 rounded-xl bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors"
+                className="hidden sm:flex p-2 rounded-xl bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors"
                 title="Ventana flotante (Picture-in-Picture)"
               >
                 <Tv className="w-4 h-4" />
@@ -961,7 +1049,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             {/* In-app Mini Player */}
             <button
               onClick={onMinimize}
-              className="p-2 rounded-xl bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors"
+              className="p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] flex items-center justify-center border border-zinc-700/40"
               title="Minimizar reproductor y seguir navegando"
             >
               <Minimize2 className="w-4 h-4" />
@@ -970,7 +1058,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             {/* Close Button */}
             <button
               onClick={onClose}
-              className="p-2 rounded-xl bg-zinc-900/60 hover:bg-rose-600 text-zinc-300 hover:text-white transition-colors"
+              className="p-2 rounded-xl bg-zinc-900/80 hover:bg-rose-600 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] flex items-center justify-center border border-zinc-700/40"
               title="Cerrar reproductor"
             >
               <X className="w-5 h-5" />
@@ -980,7 +1068,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
         {/* Side Episodes Drawer for Series */}
         {hasEpisodes && showEpisodesDrawer && (
-          <div className="absolute top-16 right-4 bottom-16 w-80 bg-zinc-950/95 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-40 flex flex-col backdrop-blur-xl animate-fade-in">
+          <div className="absolute inset-x-2 sm:inset-x-auto top-14 sm:top-16 sm:right-4 bottom-14 sm:bottom-16 sm:w-80 max-w-full bg-zinc-950/98 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-40 flex flex-col backdrop-blur-xl animate-fade-in">
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800 mb-3">
               <div className="flex items-center gap-2">
                 <ListVideo className="w-4 h-4 text-rose-500" />
@@ -1069,8 +1157,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 onClick={() => {
                   if (videoRef.current) {
                     videoRef.current.currentTime = 0;
-                    videoRef.current.play();
-                    setIsPlaying(true);
+                    const p = videoRef.current.play();
+                    if (p !== undefined) {
+                      p.then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+                    }
                     setHasEnded(false);
                   }
                 }}
@@ -1127,7 +1217,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         {/* Bottom Video Controls for Native Video Player */}
         {!isUsingEmbed && !hasVideoError && (
           <div
-            className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent px-4 py-4 z-30 transition-opacity duration-300 ${
+            className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent px-3 sm:px-4 py-2.5 sm:py-4 z-30 transition-opacity duration-300 ${
               areControlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
             }`}
           >
@@ -1137,20 +1227,20 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               onClick={handleSeek}
               onMouseMove={handleProgressHover}
               onMouseLeave={() => setHoverTime(null)}
-              className="group relative w-full h-2 hover:h-3.5 bg-zinc-800/90 rounded-full cursor-pointer transition-all mb-3 flex items-center"
+              className="group relative w-full h-3 sm:h-2 hover:h-3.5 bg-zinc-800/90 rounded-full cursor-pointer transition-all mb-2.5 sm:mb-3 flex items-center py-1 touch-none"
             >
               {/* Buffer progress */}
               <div
-                className="absolute left-0 top-0 bottom-0 bg-zinc-700/60 rounded-full"
+                className="absolute left-0 top-0 bottom-0 bg-zinc-700/60 rounded-full pointer-events-none"
                 style={{ width: `${Math.min(progressPercent + 25, 100)}%` }}
               />
 
               {/* Current Playback Progress */}
               <div
-                className="absolute left-0 top-0 bottom-0 bg-gradient-to-r from-rose-600 to-rose-500 rounded-full flex items-center justify-end"
+                className="absolute left-0 top-0 bottom-0 bg-gradient-to-r from-rose-600 to-rose-500 rounded-full flex items-center justify-end pointer-events-none"
                 style={{ width: `${progressPercent}%` }}
               >
-                <div className="w-3.5 h-3.5 rounded-full bg-white shadow-md shadow-black/80 scale-0 group-hover:scale-100 transition-transform -mr-1.5" />
+                <div className="w-3.5 h-3.5 rounded-full bg-white shadow-md shadow-black/80 scale-100 sm:scale-0 sm:group-hover:scale-100 transition-transform -mr-1.5" />
               </div>
 
               {/* Hover timestamp indicator */}
@@ -1165,19 +1255,19 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             </div>
 
             {/* Controls Bottom Row */}
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-1.5 sm:gap-2">
               {/* Left Controls: Play, Next Ep, Skips, Time, Volume */}
-              <div className="flex items-center gap-1.5 sm:gap-3">
+              <div className="flex items-center gap-1 sm:gap-2.5 min-w-0">
                 {/* Play / Pause */}
                 <button
                   onClick={togglePlay}
-                  className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors"
+                  className="p-2 sm:p-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors shrink-0 min-w-[38px] min-h-[38px] flex items-center justify-center"
                   title={isPlaying ? 'Pausar (Espacio)' : 'Reproducir (Espacio)'}
                 >
                   {isPlaying ? (
-                    <Pause className="w-5 h-5 fill-white" />
+                    <Pause className="w-4 h-4 sm:w-5 sm:h-5 fill-white" />
                   ) : (
-                    <Play className="w-5 h-5 fill-white translate-x-0.5" />
+                    <Play className="w-4 h-4 sm:w-5 sm:h-5 fill-white translate-x-0.5" />
                   )}
                 </button>
 
@@ -1185,7 +1275,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 {hasNextEpisode && (
                   <button
                     onClick={handleNextEpisode}
-                    className="p-1.5 sm:p-2 text-rose-400 hover:text-rose-300 transition-colors"
+                    className="p-1.5 sm:p-2 text-rose-400 hover:text-rose-300 transition-colors shrink-0"
                     title="Siguiente Episodio"
                   >
                     <SkipForward className="w-4 h-4 sm:w-5 sm:h-5 fill-rose-400" />
@@ -1195,8 +1285,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 {/* 10s Backward */}
                 <button
                   onClick={() => handleSkip(-10)}
-                  className="p-1.5 sm:p-2 text-zinc-300 hover:text-white transition-colors"
-                  title="Retroceder 10 segundos (←)"
+                  className="p-1.5 sm:p-2 text-zinc-300 hover:text-white transition-colors shrink-0"
+                  title="Retroceder 10 segundos"
                 >
                   <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
@@ -1204,14 +1294,14 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 {/* 10s Forward */}
                 <button
                   onClick={() => handleSkip(10)}
-                  className="p-1.5 sm:p-2 text-zinc-300 hover:text-white transition-colors"
-                  title="Adelantar 10 segundos (→)"
+                  className="p-1.5 sm:p-2 text-zinc-300 hover:text-white transition-colors shrink-0"
+                  title="Adelantar 10 segundos"
                 >
                   <RotateCw className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
 
-                {/* Volume & Mute Slider */}
-                <div className="group/vol flex items-center gap-2">
+                {/* Desktop Volume & Mute Slider */}
+                <div className="hidden sm:flex items-center gap-2 group/vol">
                   <button
                     onClick={toggleMute}
                     className="p-1.5 text-zinc-300 hover:text-white transition-colors"
@@ -1236,15 +1326,15 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 </div>
 
                 {/* Current Time / Total Time */}
-                <div className="text-xs sm:text-sm font-mono text-zinc-300 ml-1">
+                <div className="text-[11px] sm:text-xs font-mono text-zinc-300 shrink-0 whitespace-nowrap ml-0.5">
                   <span>{formatTime(currentTime)}</span>
-                  <span className="text-zinc-500 mx-1">/</span>
+                  <span className="text-zinc-500 mx-0.5 sm:mx-1">/</span>
                   <span className="text-zinc-400">{formatTime(duration)}</span>
                 </div>
               </div>
 
-              {/* Right Controls: Speed, Subtitles, Theater, Fullscreen */}
-              <div className="flex items-center gap-1.5 sm:gap-2 relative">
+              {/* Right Controls: Speed, Subtitles, Settings, Fullscreen */}
+              <div className="flex items-center gap-1 sm:gap-2 shrink-0 relative">
                 {/* Playback Speed Menu */}
                 <div className="relative">
                   <button
@@ -1252,19 +1342,19 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                       setShowSpeedMenu(!showSpeedMenu);
                       setShowSubtitlesMenu(false);
                     }}
-                    className={`p-1.5 sm:p-2 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors ${
+                    className={`px-2 py-1.5 sm:p-2 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors min-h-[36px] ${
                       playbackSpeed !== 1
                         ? 'bg-rose-600/30 text-rose-300 border border-rose-500/40'
-                        : 'text-zinc-300 hover:text-white hover:bg-zinc-800'
+                        : 'bg-zinc-900/80 sm:bg-transparent text-zinc-300 hover:text-white hover:bg-zinc-800'
                     }`}
                     title="Velocidad de reproducción"
                   >
-                    <Gauge className="w-4 h-4" />
-                    <span className="text-xs">{playbackSpeed}x</span>
+                    <Gauge className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-400" />
+                    <span className="text-xs font-mono">{playbackSpeed}x</span>
                   </button>
 
                   {showSpeedMenu && (
-                    <div className="absolute bottom-12 right-0 bg-zinc-900 border border-zinc-800 rounded-xl p-1.5 shadow-2xl z-40 w-28">
+                    <div className="absolute bottom-12 right-0 bg-zinc-900/98 backdrop-blur-xl border border-zinc-800 rounded-xl p-1.5 shadow-2xl z-50 w-32 max-w-[calc(100vw-1rem)]">
                       <span className="text-[10px] uppercase font-bold text-zinc-500 px-2 py-1 block">
                         Velocidad
                       </span>
@@ -1272,7 +1362,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                         <button
                           key={s}
                           onClick={() => handleSpeedSelect(s)}
-                          className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                          className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors ${
                             playbackSpeed === s
                               ? 'bg-rose-600 text-white font-bold'
                               : 'text-zinc-300 hover:bg-zinc-800'
@@ -1292,18 +1382,21 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                       setShowSubtitlesMenu(!showSubtitlesMenu);
                       setShowSpeedMenu(false);
                     }}
-                    className={`p-1.5 sm:p-2 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors ${
+                    className={`px-2 py-1.5 sm:p-2 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors min-h-[36px] ${
                       selectedSubtitle !== 'off'
                         ? 'bg-rose-600/30 text-rose-300 border border-rose-500/40'
-                        : 'text-zinc-300 hover:text-white hover:bg-zinc-800'
+                        : 'bg-zinc-900/80 sm:bg-transparent text-zinc-300 hover:text-white hover:bg-zinc-800'
                     }`}
                     title="Subtítulos"
                   >
-                    <Subtitles className="w-4 h-4" />
+                    <Subtitles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-400" />
+                    <span className="text-[10px] font-bold uppercase sm:hidden">
+                      {selectedSubtitle === 'off' ? 'CC' : selectedSubtitle}
+                    </span>
                   </button>
 
                   {showSubtitlesMenu && (
-                    <div className="absolute bottom-12 right-0 bg-zinc-900 border border-zinc-800 rounded-xl p-1.5 shadow-2xl z-40 w-36">
+                    <div className="absolute bottom-12 right-0 bg-zinc-900/98 backdrop-blur-xl border border-zinc-800 rounded-xl p-1.5 shadow-2xl z-50 w-40 max-w-[calc(100vw-1rem)]">
                       <span className="text-[10px] uppercase font-bold text-zinc-500 px-2 py-1 block">
                         Subtítulos
                       </span>
@@ -1312,7 +1405,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                           setSelectedSubtitle('off');
                           setShowSubtitlesMenu(false);
                         }}
-                        className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors ${
                           selectedSubtitle === 'off'
                             ? 'bg-rose-600 text-white font-bold'
                             : 'text-zinc-300 hover:bg-zinc-800'
@@ -1325,7 +1418,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                           setSelectedSubtitle('es');
                           setShowSubtitlesMenu(false);
                         }}
-                        className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors ${
                           selectedSubtitle === 'es'
                             ? 'bg-rose-600 text-white font-bold'
                             : 'text-zinc-300 hover:bg-zinc-800'
@@ -1338,7 +1431,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                           setSelectedSubtitle('en');
                           setShowSubtitlesMenu(false);
                         }}
-                        className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors ${
                           selectedSubtitle === 'en'
                             ? 'bg-rose-600 text-white font-bold'
                             : 'text-zinc-300 hover:bg-zinc-800'
@@ -1350,10 +1443,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   )}
                 </div>
 
-                {/* Theater Mode Toggle */}
+                {/* Theater Mode Toggle (Desktop only) */}
                 <button
                   onClick={() => setIsTheaterMode(!isTheaterMode)}
-                  className={`p-1.5 sm:p-2 rounded-xl transition-colors ${
+                  className={`hidden sm:flex p-1.5 sm:p-2 rounded-xl transition-colors ${
                     isTheaterMode
                       ? 'bg-amber-500/20 text-amber-300'
                       : 'text-zinc-300 hover:text-white hover:bg-zinc-800'
@@ -1366,7 +1459,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 {/* Fullscreen Toggle */}
                 <button
                   onClick={toggleFullscreen}
-                  className="p-1.5 sm:p-2 rounded-xl text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors"
+                  className="p-2 sm:p-2 rounded-xl text-zinc-300 hover:text-white bg-zinc-900/80 sm:bg-transparent hover:bg-zinc-800 transition-colors min-w-[38px] min-h-[38px] flex items-center justify-center"
                   title="Pantalla completa (F)"
                 >
                   {isFullscreen ? (
@@ -1374,6 +1467,103 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   ) : (
                     <Maximize className="w-4 h-4 sm:w-5 sm:h-5" />
                   )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Mobile Settings Modal / Drawer */}
+        {showMobileSettingsModal && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in">
+            <div className="w-full sm:max-w-md bg-zinc-900 border border-zinc-800 rounded-t-2xl sm:rounded-2xl p-5 shadow-2xl text-zinc-100 max-h-[85vh] overflow-y-auto">
+              <div className="flex items-center justify-between pb-3 border-b border-zinc-800 mb-4">
+                <div className="flex items-center gap-2">
+                  <SlidersHorizontal className="w-4 h-4 text-rose-500" />
+                  <h3 className="font-bold text-sm sm:text-base">Opciones del Reproductor</h3>
+                </div>
+                <button
+                  onClick={() => setShowMobileSettingsModal(false)}
+                  className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Subtitles Section */}
+              <div className="mb-4">
+                <span className="text-xs font-semibold text-zinc-400 block mb-2 uppercase tracking-wide">
+                  Subtítulos
+                </span>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'off', label: 'Sin subtítulos' },
+                    { id: 'es', label: 'Español' },
+                    { id: 'en', label: 'English' },
+                  ].map((sub) => (
+                    <button
+                      key={sub.id}
+                      onClick={() => {
+                        setSelectedSubtitle(sub.id);
+                      }}
+                      className={`py-2 px-2.5 rounded-xl text-xs font-semibold border transition-all ${
+                        selectedSubtitle === sub.id
+                          ? 'bg-rose-600 text-white border-rose-500 shadow-md'
+                          : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
+                      }`}
+                    >
+                      {sub.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Playback Speed Section */}
+              <div className="mb-4">
+                <span className="text-xs font-semibold text-zinc-400 block mb-2 uppercase tracking-wide">
+                  Velocidad de reproducción
+                </span>
+                <div className="grid grid-cols-3 gap-2">
+                  {[0.5, 0.75, 1, 1.25, 1.5, 2].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => {
+                        handleSpeedSelect(s);
+                      }}
+                      className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all ${
+                        playbackSpeed === s
+                          ? 'bg-rose-600 text-white border-rose-500 shadow-md'
+                          : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
+                      }`}
+                    >
+                      {s}x {s === 1 ? '(Normal)' : ''}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Quick Actions (Fullscreen, Mute, Source) */}
+              <div className="pt-2 border-t border-zinc-800 space-y-2">
+                <button
+                  onClick={() => {
+                    toggleFullscreen();
+                    setShowMobileSettingsModal(false);
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200"
+                >
+                  <Maximize className="w-4 h-4 text-rose-400" />
+                  <span>{isFullscreen ? 'Salir de Pantalla Completa' : 'Pantalla Completa'}</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setShowSourceModal(true);
+                    setShowMobileSettingsModal(false);
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-xs font-semibold text-zinc-300"
+                >
+                  <Upload className="w-4 h-4 text-rose-400" />
+                  <span>Cambiar Fuente de Video o Archivo</span>
                 </button>
               </div>
             </div>

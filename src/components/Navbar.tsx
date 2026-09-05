@@ -12,6 +12,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { downloadProjectZip } from '../utils/exportProject';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface NavbarProps {
   activeTab: 'inicio' | 'peliculas' | 'series' | 'mi-lista' | 'historial';
@@ -53,26 +54,26 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 w-full bg-zinc-950/85 backdrop-blur-md border-b border-zinc-800/80 transition-colors">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3 sm:gap-4">
+    <header className="sticky top-0 z-40 w-full max-w-full overflow-hidden bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800/80 transition-colors">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4">
         {/* Brand / Logo */}
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-2 sm:gap-6 shrink-0">
           <button
             onClick={() => {
               setActiveTab('inicio');
               setSearchQuery('');
             }}
-            className="flex items-center gap-2.5 text-left group focus:outline-none"
+            className="flex items-center gap-2 sm:gap-2.5 text-left group focus:outline-none"
             aria-label="Ir al inicio"
           >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-rose-600 to-amber-500 flex items-center justify-center shadow-lg shadow-rose-950/50 group-hover:scale-105 transition-transform">
-              <Film className="w-5 h-5 text-white" />
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-rose-600 to-amber-500 flex items-center justify-center shadow-lg shadow-rose-950/50 group-hover:scale-105 transition-transform shrink-0">
+              <Film className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
             </div>
             <div>
-              <span className="text-xl font-black tracking-tight text-white flex items-center gap-1 font-['Outfit']">
+              <span className="text-base sm:text-xl font-black tracking-tight text-white flex items-center gap-1 font-['Outfit']">
                 Cine<span className="text-rose-500">Stream</span>
               </span>
-              <span className="text-[10px] block text-zinc-400 font-medium tracking-wide uppercase">
+              <span className="text-[9px] sm:text-[10px] hidden xs:block text-zinc-400 font-medium tracking-wide uppercase">
                 Películas & Series
               </span>
             </div>
@@ -143,14 +144,14 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Right Section: Search, Download ZIP for Vercel, Add Content */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 max-w-[65%] sm:max-w-none">
           {/* Search Bar */}
-          <div className="relative flex items-center">
+          <div className="relative flex items-center shrink-0">
             <div
-              className={`flex items-center rounded-xl bg-zinc-900 border border-zinc-800 px-3 py-1.5 transition-all duration-200 ${
+              className={`flex items-center rounded-xl bg-zinc-900 border border-zinc-800 px-2 sm:px-3 py-1.5 transition-all duration-200 ${
                 isSearchOpen || searchQuery
-                  ? 'w-36 sm:w-56 border-rose-500/60 ring-1 ring-rose-500/30'
-                  : 'w-9 sm:w-44 bg-zinc-900/60'
+                  ? 'w-28 sm:w-56 border-rose-500/60 ring-1 ring-rose-500/30'
+                  : 'w-8 sm:w-44 bg-zinc-900/60 justify-center sm:justify-start'
               }`}
             >
               <Search className="w-4 h-4 text-zinc-400 shrink-0" />
@@ -160,8 +161,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => setIsSearchOpen(true)}
                 onBlur={() => !searchQuery && setIsSearchOpen(false)}
-                placeholder="Buscar películas, series..."
-                className="w-full bg-transparent border-none text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none ml-2"
+                placeholder="Buscar..."
+                className={`bg-transparent border-none text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none ml-1.5 ${
+                  isSearchOpen || searchQuery ? 'w-full block' : 'hidden sm:block sm:w-full'
+                }`}
               />
               {searchQuery && (
                 <button
@@ -178,23 +181,26 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Cloud Sync Status Badge */}
           <button
             onClick={onSyncCloud}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-300 text-xs font-medium transition-colors active:scale-95"
-            title="Sincronización en la nube (Firestore): Haz clic para sincronizar tus películas entre tu celular y laptop"
+            className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-300 text-xs font-medium transition-colors active:scale-95 shrink-0"
+            title="Sincronización en la nube (Firestore): Haz clic para sincronizar tus películas"
           >
             <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50 animate-pulse" />
             <span className="hidden lg:inline text-zinc-300">Nube</span>
             {cloudMoviesCount > 0 && (
-              <span className="px-1.5 py-0.5 rounded-md bg-emerald-950/90 border border-emerald-500/40 text-emerald-400 font-bold text-[10px]">
+              <span className="px-1 py-0.2 rounded-md bg-emerald-950/90 border border-emerald-500/40 text-emerald-400 font-bold text-[10px]">
                 {cloudMoviesCount}
               </span>
             )}
           </button>
 
+          {/* PWA Install Button */}
+          <PWAInstallButton />
+
           {/* DOWNLOAD FOR VERCEL BUTTON */}
           <button
             onClick={handleDownloadZip}
             disabled={isDownloading}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs sm:text-sm font-semibold transition-all active:scale-95 ${
+            className={`flex items-center gap-1 sm:gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs sm:text-sm font-semibold transition-all active:scale-95 shrink-0 ${
               downloadSuccess
                 ? 'bg-emerald-600 text-white border-emerald-500'
                 : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-200 hover:text-white border-zinc-700 shadow-sm'
@@ -202,31 +208,30 @@ export const Navbar: React.FC<NavbarProps> = ({
             title="Descargar código completo en archivo .ZIP listo para desplegar en Vercel"
           >
             {isDownloading ? (
-              <Loader2 className="w-4 h-4 animate-spin text-rose-400" />
+              <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin text-rose-400 shrink-0" />
             ) : downloadSuccess ? (
-              <CheckCircle2 className="w-4 h-4 text-white" />
+              <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white shrink-0" />
             ) : (
-              <Download className="w-4 h-4 text-rose-400" />
+              <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-400 shrink-0" />
             )}
-            <span className="hidden sm:inline">
+            <span className="hidden md:inline">
               {isDownloading
                 ? 'Empaquetando...'
                 : downloadSuccess
-                ? '¡ZIP Descargado!'
-                : 'Descargar ZIP (Vercel)'}
+                ? '¡ZIP Listo!'
+                : 'ZIP Vercel'}
             </span>
-            <span className="sm:hidden text-xs">ZIP</span>
+            <span className="md:hidden text-[11px] font-bold">ZIP</span>
           </button>
 
           {/* Subir Contenido (Peli / Serie) */}
           <button
             onClick={onOpenAddMovie}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white text-xs sm:text-sm font-bold shadow-md shadow-rose-950/40 transition-all active:scale-95"
+            className="flex items-center gap-1 sm:gap-1.5 px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white text-xs sm:text-sm font-bold shadow-md shadow-rose-950/40 transition-all active:scale-95 shrink-0"
             title="Subir nueva película o serie con episodios"
           >
-            <PlusCircle className="w-4 h-4" />
-            <span className="hidden sm:inline">Subir Peli/Serie</span>
-            <span className="sm:hidden text-xs">Subir</span>
+            <PlusCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="hidden md:inline">Subir</span>
           </button>
         </div>
       </div>

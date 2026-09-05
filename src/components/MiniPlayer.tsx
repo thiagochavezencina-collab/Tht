@@ -58,8 +58,10 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
     }
     if (!videoRef.current) return;
     if (videoRef.current.paused) {
-      videoRef.current.play();
-      setIsPlaying(true);
+      const p = videoRef.current.play();
+      if (p !== undefined) {
+        p.then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+      }
     } else {
       videoRef.current.pause();
       setIsPlaying(false);
