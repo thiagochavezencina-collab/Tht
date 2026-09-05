@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import Hls from 'hls.js';
 import {
   Play,
   Pause,
@@ -103,6 +104,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const [hasVideoError, setHasVideoError] = useState(() => !rawVideoUrl || rawVideoUrl.trim() === '');
   const [errorMessage, setErrorMessage] = useState('');
   const [isPlaying, setIsPlaying] = useState(() => !!rawVideoUrl && rawVideoUrl.trim() !== '');
+  const [isBuffering, setIsBuffering] = useState(false);
 
   // Resolve video URL from local IndexedDB if stored as a file
   useEffect(() => {
@@ -164,6 +166,54 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   );
 
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
+
+  // Initialize HLS for .m3u8 streaming or bind direct URL
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !playableVideoUrl || isEmbedSource) return;
+
+    const isHlsUrl =
+      playableVideoUrl.includes('.m3u8') ||
+      playableVideoUrl.includes('application/x-mpegURL');
+
+    if (isHlsUrl) {
+      if (Hls.isSupported()) {
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+        }
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+        });
+        hls.loadSource(playableVideoUrl);
+        hls.attachMedia(video);
+        hlsRef.current = hls;
+
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            console.warn('[Hls.js] Fatal streaming error:', data);
+            handleVideoError();
+          }
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = playableVideoUrl;
+      }
+    } else {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      video.src = playableVideoUrl;
+    }
+
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [playableVideoUrl, isEmbedSource]);
 
   // Next suggested movies
   const nextMovies = allMovies.filter((m) => m.id !== movie.id).slice(0, 3);
@@ -298,15 +348,34 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     videoRef.current
       .play()
       .then(() => setIsPlaying(true))
-      .catch(() => setIsPlaying(false));
+      .catch(() => {
+        // Autoplay policy: mobile browsers require a user gesture before starting playback unmuted.
+        // This is normal and expected on iOS/Android; the user can simply tap the play button.
+        setIsPlaying(false);
+      });
   };
 
   const handleVideoError = () => {
+    const err = videoRef.current?.error;
+    let detail =
+      'El reproductor nativo no pudo decodificar este enlace de video directamente.';
+
+    if (err) {
+      if (err.code === 2) {
+        detail =
+          'Error de red al conectar con el servidor del video. Es posible que el servidor limite la tasa de descarga o rechace peticiones externas.';
+      } else if (err.code === 3) {
+        detail =
+          'Error al decodificar el video. El códec o perfil no es compatible directamente con el reproductor de este navegador móvil.';
+      } else if (err.code === 4) {
+        detail =
+          'Acceso denegado o formato no soportado. Común en servidores con enlaces protegidos por token temporal (?s=...) vinculados a una sola dirección IP.';
+      }
+    }
+
     setHasVideoError(true);
     setIsPlaying(false);
-    setErrorMessage(
-      'El reproductor nativo no pudo decodificar este enlace de video directamente. Puede requerir reproductor embebido o tener restricciones de origen.'
-    );
+    setErrorMessage(detail);
   };
 
   const togglePlay = () => {
@@ -510,21 +579,71 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           /* RENDER CASE 2: Native HTML5 Video Element with Full Controls & Minute Bar */
           <div className="w-full h-full relative flex items-center justify-center bg-black">
             {playableVideoUrl && !hasVideoError && (
-              <video
-                ref={videoRef}
-                src={playableVideoUrl}
-                className="w-full h-full object-contain cursor-pointer"
-                playsInline
-                onTimeUpdate={handleTimeUpdate}
-                onLoadedMetadata={handleLoadedMetadata}
-                onError={handleVideoError}
-                onEnded={() => {
-                  setIsPlaying(false);
-                  setHasEnded(true);
-                  setAreControlsVisible(true);
-                }}
-                onClick={togglePlay}
-              />
+              <>
+                <video
+                  ref={videoRef}
+                  src={
+                    playableVideoUrl.includes('.m3u8') && Hls.isSupported()
+                      ? undefined
+                      : playableVideoUrl
+                  }
+                  className="w-full h-full object-contain cursor-pointer"
+                  playsInline
+                  preload="auto"
+                  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                  // @ts-ignore
+                  webkit-playsinline="true"
+                  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                  // @ts-ignore
+                  referrerPolicy="no-referrer"
+                  onTimeUpdate={handleTimeUpdate}
+                  onLoadedMetadata={handleLoadedMetadata}
+                  onLoadStart={() => setIsBuffering(true)}
+                  onLoadedData={() => setIsBuffering(false)}
+                  onWaiting={() => setIsBuffering(true)}
+                  onCanPlay={() => setIsBuffering(false)}
+                  onPlaying={() => {
+                    setIsBuffering(false);
+                    setIsPlaying(true);
+                  }}
+                  onPause={() => setIsPlaying(false)}
+                  onError={handleVideoError}
+                  onEnded={() => {
+                    setIsPlaying(false);
+                    setHasEnded(true);
+                    setAreControlsVisible(true);
+                  }}
+                  onClick={togglePlay}
+                />
+
+                {/* Central Buffering Spinner (Crucial for 2GB videos loading metadata on mobile) */}
+                {isBuffering && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 pointer-events-none z-20 animate-fade-in p-4 text-center">
+                    <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full border-4 border-rose-500 border-t-transparent animate-spin mb-3 shadow-2xl" />
+                    <span className="text-white text-xs sm:text-sm font-semibold bg-zinc-900/90 px-4 py-1.5 rounded-full border border-zinc-700 shadow-lg">
+                      Cargando película...
+                    </span>
+                    <span className="text-[11px] text-zinc-400 mt-2 max-w-xs leading-tight">
+                      El video pesa 2.18 GB. En celulares puede tardar unos segundos en iniciar la descarga.
+                    </span>
+                  </div>
+                )}
+
+                {/* Central Play Button (Essential for mobile browsers that require user gesture) */}
+                {!isPlaying && !isBuffering && !hasEnded && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      togglePlay();
+                    }}
+                    className="absolute inset-0 m-auto w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-rose-600/90 hover:bg-rose-500 text-white flex items-center justify-center shadow-2xl hover:scale-110 active:scale-95 transition-all z-20 cursor-pointer backdrop-blur-sm border border-rose-400/30 ring-4 ring-rose-500/20"
+                    aria-label="Reproducir video"
+                  >
+                    <Play className="w-8 h-8 sm:w-9 sm:h-9 fill-white translate-x-0.5" />
+                  </button>
+                )}
+              </>
             )}
 
             {/* Resolution / Source Selection Overlay (If error, missing URL, or requested by user) */}
@@ -565,13 +684,42 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   </h3>
 
                   {movie.hasLocalFile ? (
-                    <p className="text-zinc-400 text-xs sm:text-sm mb-5 leading-relaxed">
+                    <p className="text-zinc-400 text-xs sm:text-sm mb-4 leading-relaxed">
                       Esta película se sincronizó en tu catálogo vía la nube. Sin embargo, el archivo de video local (<span className="text-amber-300 font-mono">{movie.fileName || 'video.mp4'}</span>) reside físicamente en la memoria de tu celular. Elige cómo deseas verla en esta laptop:
                     </p>
                   ) : (
-                    <p className="text-zinc-400 text-xs sm:text-sm mb-5 leading-relaxed">
+                    <p className="text-zinc-400 text-xs sm:text-sm mb-4 leading-relaxed">
                       {errorMessage || 'Agrega un enlace web de streaming o carga un archivo local para reproducir en este dispositivo.'}
                     </p>
+                  )}
+
+                  {/* Diagnostic Banner if link failed or user is on mobile */}
+                  {playableVideoUrl && !playableVideoUrl.includes('blob:') && (
+                    <div className="mb-4 p-3.5 rounded-xl bg-zinc-950 border border-zinc-700 text-zinc-200 text-xs space-y-2">
+                      <div className="flex items-center gap-2 font-bold text-amber-300">
+                        <Smartphone className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>¿Por qué abrió en otras laptops pero en tu celular no?</span>
+                      </div>
+                      <p className="text-[11px] text-zinc-300 leading-relaxed">
+                        Este archivo pesa <strong>2.18 GB</strong> y su cabecera de datos (moov) es de <strong>6.9 MB</strong>. Las laptops en Chrome descargan la cabecera en segundo plano sin restricciones, pero los celulares (Chrome Android / Safari iOS) aplican políticas estrictas:
+                      </p>
+                      <ul className="text-[11px] text-zinc-400 list-disc list-inside space-y-1 pl-1">
+                        <li><strong>Requieren toque manual:</strong> En celulares el navegador bloquea la reproducción automática con sonido. Toca el botón Play central.</li>
+                        <li><strong>Tiempo de espera:</strong> El servidor transfiere a velocidad lenta (~130 KB/s), por lo que el celular puede tardar hasta 40-50 segundos en mostrar el primer segundo.</li>
+                        <li><strong>Reproductor del sistema:</strong> Puedes abrirlo directamente con el botón de abajo en el reproductor de tu teléfono (VLC, Chrome, QuickTime).</li>
+                      </ul>
+                      <div className="pt-1 flex flex-wrap items-center gap-2">
+                        <a
+                          href={playableVideoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] transition-colors"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>Abrir enlace directo en el celular</span>
+                        </a>
+                      </div>
+                    </div>
                   )}
 
                   {saveSuccessMsg && (
