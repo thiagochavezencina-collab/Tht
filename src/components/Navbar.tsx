@@ -10,9 +10,11 @@ import {
   Download,
   CheckCircle2,
   Loader2,
+  GraduationCap,
 } from 'lucide-react';
 import { downloadProjectZip } from '../utils/exportProject';
 import { PWAInstallButton } from './PWAInstallButton';
+import { PanicConfig, PANIC_DESTINATIONS } from './PanicModal';
 
 interface NavbarProps {
   activeTab: 'inicio' | 'peliculas' | 'series' | 'mi-lista' | 'historial';
@@ -23,6 +25,8 @@ interface NavbarProps {
   onOpenAddMovie: () => void;
   cloudMoviesCount?: number;
   onSyncCloud?: () => void;
+  onOpenPanicModal?: () => void;
+  stealthConfig?: PanicConfig;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -34,10 +38,16 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAddMovie,
   cloudMoviesCount = 0,
   onSyncCloud,
+  onOpenPanicModal,
+  stealthConfig,
 }) => {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
+
+  const isStealth = stealthConfig?.stealthMode;
+  const currentTarget =
+    PANIC_DESTINATIONS.find((d) => d.id === stealthConfig?.destination) || PANIC_DESTINATIONS[0];
 
   const handleDownloadZip = async () => {
     if (isDownloading) return;
@@ -54,7 +64,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 w-full max-w-full overflow-hidden bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800/80 transition-colors">
+    <header
+      className="sticky top-0 z-40 w-full max-w-full overflow-hidden bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800/80 transition-colors"
+      style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+    >
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4">
         {/* Brand / Logo */}
         <div className="flex items-center gap-2 sm:gap-6 shrink-0">
@@ -66,15 +79,29 @@ export const Navbar: React.FC<NavbarProps> = ({
             className="flex items-center gap-2 sm:gap-2.5 text-left group focus:outline-none"
             aria-label="Ir al inicio"
           >
-            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-rose-600 to-amber-500 flex items-center justify-center shadow-lg shadow-rose-950/50 group-hover:scale-105 transition-transform shrink-0">
-              <Film className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+            <div
+              className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr ${
+                isStealth ? currentTarget.color : 'from-rose-600 to-amber-500'
+              } flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform shrink-0`}
+            >
+              {isStealth ? (
+                <span className="text-white font-black text-xs sm:text-sm">{currentTarget.iconText}</span>
+              ) : (
+                <Film className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+              )}
             </div>
             <div>
               <span className="text-base sm:text-xl font-black tracking-tight text-white flex items-center gap-1 font-['Outfit']">
-                Cine<span className="text-rose-500">Stream</span>
+                {isStealth ? (
+                  <span>{currentTarget.name.split(' ')[0]}</span>
+                ) : (
+                  <>
+                    Cine<span className="text-rose-500">Stream</span>
+                  </>
+                )}
               </span>
               <span className="text-[9px] sm:text-[10px] hidden xs:block text-zinc-400 font-medium tracking-wide uppercase">
-                Películas & Series
+                {isStealth ? 'Portal Estudiantil' : 'Películas & Series'}
               </span>
             </div>
           </button>
@@ -89,7 +116,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
               }`}
             >
-              Inicio
+              {isStealth ? 'Panel' : 'Inicio'}
             </button>
             <button
               onClick={() => setActiveTab('peliculas')}
@@ -100,7 +127,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <Film className="w-3.5 h-3.5 text-rose-500" />
-              <span>Películas</span>
+              <span>{isStealth ? 'Clases' : 'Películas'}</span>
             </button>
             <button
               onClick={() => setActiveTab('series')}
@@ -111,7 +138,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <Tv className="w-3.5 h-3.5 text-rose-500" />
-              <span>Series</span>
+              <span>{isStealth ? 'Cursos' : 'Series'}</span>
             </button>
             <button
               onClick={() => setActiveTab('mi-lista')}
@@ -122,7 +149,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <Bookmark className="w-3.5 h-3.5" />
-              <span>Mi Lista</span>
+              <span>{isStealth ? 'Tareas' : 'Mi Lista'}</span>
               {watchlistCount > 0 && (
                 <span className="ml-1 px-1.5 py-0.5 text-[11px] bg-rose-600/90 text-white font-bold rounded-full">
                   {watchlistCount}
@@ -224,6 +251,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="md:hidden text-[11px] font-bold">ZIP</span>
           </button>
 
+          {/* Discreet Panic / Camouflage Button (ALEKS, Pearson, Beeverso) */}
+          {onOpenPanicModal && (
+            <button
+              onClick={onOpenPanicModal}
+              className="flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-xl bg-zinc-900/80 hover:bg-amber-950/40 text-zinc-400 hover:text-amber-400 border border-zinc-800 hover:border-amber-500/40 text-xs font-semibold transition-all shrink-0"
+              title="Ajustes de Escape Rápido (ALEKS, Pearson, Beeverso) • Doble Esc"
+            >
+              <GraduationCap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500 shrink-0" />
+              <span className="hidden lg:inline text-[11px]">Escape</span>
+            </button>
+          )}
+
           {/* Subir Contenido (Peli / Serie) */}
           <button
             onClick={onOpenAddMovie}
@@ -244,7 +283,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             activeTab === 'inicio' ? 'text-rose-500 font-semibold' : 'text-zinc-400'
           }`}
         >
-          Inicio
+          {isStealth ? 'Panel' : 'Inicio'}
         </button>
         <button
           onClick={() => setActiveTab('peliculas')}
@@ -252,7 +291,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             activeTab === 'peliculas' ? 'text-rose-500 font-semibold' : 'text-zinc-400'
           }`}
         >
-          Películas
+          {isStealth ? 'Clases' : 'Películas'}
         </button>
         <button
           onClick={() => setActiveTab('series')}
@@ -260,7 +299,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             activeTab === 'series' ? 'text-rose-500 font-semibold' : 'text-zinc-400'
           }`}
         >
-          Series
+          {isStealth ? 'Cursos' : 'Series'}
         </button>
         <button
           onClick={() => setActiveTab('mi-lista')}
@@ -268,7 +307,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             activeTab === 'mi-lista' ? 'text-rose-500 font-semibold' : 'text-zinc-400'
           }`}
         >
-          <span>Mi Lista</span>
+          <span>{isStealth ? 'Tareas' : 'Mi Lista'}</span>
           {watchlistCount > 0 && (
             <span className="px-1 text-[10px] bg-rose-600 text-white rounded-full">
               {watchlistCount}

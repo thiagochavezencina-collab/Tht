@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Play,
@@ -49,6 +49,48 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   const [userRating, setUserRating] = useState<number>(5);
   const [commentText, setCommentText] = useState<string>('');
   const [authorName, setAuthorName] = useState<string>('Espectador');
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const touchStartY = useRef<number | null>(null);
+
+  // Lock background scroll on iOS and scroll container to top immediately
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    const originalTouchAction = document.body.style.touchAction;
+    document.body.style.overflow = 'hidden';
+    document.body.style.touchAction = 'none';
+
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.body.style.touchAction = originalTouchAction;
+    };
+  }, []);
+
+  // Handle pull-down gesture to dismiss when scrolled to top
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (scrollContainerRef.current && scrollContainerRef.current.scrollTop <= 5) {
+      touchStartY.current = e.touches[0].clientY;
+    } else {
+      touchStartY.current = null;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (touchStartY.current === null) return;
+    const currentY = e.touches[0].clientY;
+    const diff = currentY - touchStartY.current;
+    if (diff > 140) {
+      touchStartY.current = null;
+      onClose();
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchStartY.current = null;
+  };
 
   const handleSubmitReview = (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,16 +102,37 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   const percent = progress && progress.duration ? (progress.currentTime / progress.duration) * 100 : 0;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 animate-fade-in">
-      <div className="relative w-full max-w-4xl bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl shadow-black my-8">
-        {/* Close button */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 z-30 p-2.5 rounded-full bg-black/70 hover:bg-rose-600 text-white transition-colors"
-          title="Cerrar ventana"
-        >
-          <X className="w-5 h-5" />
-        </button>
+    <div
+      ref={scrollContainerRef}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md animate-fade-in ios-scrollable"
+      style={{
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom, 0px))',
+      }}
+    >
+      <div
+        className="min-h-full w-full flex items-start justify-center p-0 sm:p-4 md:p-6"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        <div className="relative w-full max-w-4xl bg-zinc-900 border-0 sm:border border-zinc-800 rounded-b-3xl sm:rounded-3xl overflow-hidden shadow-2xl shadow-black my-0 sm:my-6">
+          {/* Mobile pull-down hint bar */}
+          <div className="sm:hidden absolute top-2 inset-x-0 z-40 flex justify-center pointer-events-none">
+            <div className="w-12 h-1.5 rounded-full bg-white/40 shadow-sm" />
+          </div>
+
+          {/* Close button */}
+          <button
+            onClick={onClose}
+            className="absolute top-3.5 right-3.5 sm:top-4 sm:right-4 z-40 p-2.5 rounded-full bg-black/80 hover:bg-rose-600 text-white transition-all shadow-lg border border-zinc-700/60 min-w-[42px] min-h-[42px] flex items-center justify-center active:scale-95"
+            title="Cerrar ventana"
+          >
+            <X className="w-5 h-5" />
+          </button>
 
         {/* Hero Header in Modal */}
         <div className="relative h-64 sm:h-80 w-full overflow-hidden bg-zinc-950">
@@ -416,5 +479,6 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
         </div>
       </div>
     </div>
-  );
+  </div>
+);
 };

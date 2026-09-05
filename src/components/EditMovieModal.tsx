@@ -48,6 +48,20 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
     }
   }, [movie]);
 
+  // Lock background scroll on iOS
+  useEffect(() => {
+    if (!isOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    const originalTouchAction = document.body.style.touchAction;
+    document.body.style.overflow = 'hidden';
+    document.body.style.touchAction = 'none';
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.body.style.touchAction = originalTouchAction;
+    };
+  }, [isOpen]);
+
   if (!isOpen || !movie) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -99,8 +113,20 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in select-none">
-      <div className="relative w-full max-w-2xl bg-zinc-900 border border-zinc-700/80 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md animate-fade-in ios-scrollable select-none"
+      style={{
+        paddingTop: 'max(0.75rem, env(safe-area-inset-top, 0px))',
+        paddingBottom: 'max(2rem, env(safe-area-inset-bottom, 0px))',
+      }}
+    >
+      <div
+        className="min-h-full w-full flex items-start sm:items-center justify-center p-2 sm:p-4"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        <div className="relative w-full max-w-2xl bg-zinc-900 border border-zinc-700/80 rounded-3xl shadow-2xl overflow-hidden flex flex-col my-2 sm:my-6 max-h-[92vh] sm:max-h-[90vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/60">
           <div className="flex items-center gap-2.5">
@@ -378,5 +404,6 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
         </form>
       </div>
     </div>
-  );
+  </div>
+);
 };

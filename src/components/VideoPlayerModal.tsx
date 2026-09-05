@@ -550,6 +550,19 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
+  // Prevent background body scroll on iOS while player is open
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    const originalTouchAction = document.body.style.touchAction;
+    document.body.style.overflow = 'hidden';
+    document.body.style.touchAction = 'none';
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.body.style.touchAction = originalTouchAction;
+    };
+  }, []);
+
   // Clear resume toast after 3s
   useEffect(() => {
     if (resumeToast) {
@@ -557,6 +570,29 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       return () => clearTimeout(timer);
     }
   }, [resumeToast]);
+
+  // Handle swipe down gesture to minimize player on mobile
+  const swipeStartRef = useRef<{ y: number; time: number } | null>(null);
+
+  const handleGlobalTouchStart = (e: React.TouchEvent) => {
+    swipeStartRef.current = {
+      y: e.touches[0].clientY,
+      time: Date.now(),
+    };
+  };
+
+  const handleGlobalTouchEnd = (e: React.TouchEvent) => {
+    if (!swipeStartRef.current) return;
+    const endY = e.changedTouches[0].clientY;
+    const diffY = endY - swipeStartRef.current.y;
+    const elapsed = Date.now() - swipeStartRef.current.time;
+
+    // Fast downward swipe (> 130px in < 400ms) minimizes to floating mini player
+    if (diffY > 130 && elapsed < 400) {
+      onMinimize();
+    }
+    swipeStartRef.current = null;
+  };
 
   // Handle single tap (toggle controls) and double tap (skip 10s backward/forward) on mobile
   const handleVideoTap = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -604,9 +640,12 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     <div
       ref={containerRef}
       onMouseMove={showControlsTemporarily}
-      className={`fixed inset-0 z-50 bg-black flex items-center justify-center transition-all duration-300 select-none overflow-hidden ${
+      onTouchStart={handleGlobalTouchStart}
+      onTouchEnd={handleGlobalTouchEnd}
+      className={`fixed inset-0 z-50 bg-black flex items-center justify-center transition-all duration-300 select-none overflow-hidden h-[100dvh] max-h-[100dvh] w-full max-w-full ${
         isTheaterMode ? 'p-0' : 'p-0 sm:p-4 md:p-8 bg-zinc-950/95 backdrop-blur-xl'
       }`}
+      style={{ height: '100dvh', maxHeight: '100dvh' }}
     >
       {/* Ambient Backdrop Glow */}
       <div
@@ -972,7 +1011,16 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           className={`absolute top-0 inset-x-0 p-2.5 sm:p-4 bg-gradient-to-b from-black/95 via-black/60 to-transparent flex items-center justify-between z-30 transition-opacity duration-300 ${
             areControlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
           }`}
+          style={{
+            paddingTop: 'max(0.75rem, env(safe-area-inset-top, 0px))',
+            paddingLeft: 'max(0.75rem, env(safe-area-inset-left, 0px))',
+            paddingRight: 'max(0.75rem, env(safe-area-inset-right, 0px))',
+          }}
         >
+          {/* Mobile pull-down hint */}
+          <div className="sm:hidden absolute top-1 inset-x-0 flex justify-center pointer-events-none">
+            <div className="w-10 h-1 rounded-full bg-white/25" />
+          </div>
           <div className="flex items-center gap-2 sm:gap-3 truncate max-w-[48%] sm:max-w-[65%]">
             <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
               <span className="px-1.5 sm:px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-bold bg-rose-600 text-white tracking-wider">
@@ -1068,7 +1116,13 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
         {/* Side Episodes Drawer for Series */}
         {hasEpisodes && showEpisodesDrawer && (
-          <div className="absolute inset-x-2 sm:inset-x-auto top-14 sm:top-16 sm:right-4 bottom-14 sm:bottom-16 sm:w-80 max-w-full bg-zinc-950/98 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-40 flex flex-col backdrop-blur-xl animate-fade-in">
+          <div
+            className="absolute inset-x-2 sm:inset-x-auto top-14 sm:top-16 sm:right-4 bottom-14 sm:bottom-16 sm:w-80 max-w-full bg-zinc-950/98 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-40 flex flex-col backdrop-blur-xl animate-fade-in ios-scrollable"
+            style={{
+              top: 'max(3.5rem, calc(env(safe-area-inset-top, 0px) + 3rem))',
+              bottom: 'max(4.5rem, calc(env(safe-area-inset-bottom, 0px) + 3.5rem))',
+            }}
+          >
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800 mb-3">
               <div className="flex items-center gap-2">
                 <ListVideo className="w-4 h-4 text-rose-500" />
@@ -1220,6 +1274,11 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent px-3 sm:px-4 py-2.5 sm:py-4 z-30 transition-opacity duration-300 ${
               areControlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
             }`}
+            style={{
+              paddingBottom: 'max(1.25rem, env(safe-area-inset-bottom, 0px))',
+              paddingLeft: 'max(0.75rem, env(safe-area-inset-left, 0px))',
+              paddingRight: 'max(0.75rem, env(safe-area-inset-right, 0px))',
+            }}
           >
             {/* Timeline / Progress Track */}
             <div

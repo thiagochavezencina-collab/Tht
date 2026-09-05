@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   Upload,
@@ -198,17 +198,42 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({ onClose, onAddMovi
     onClose();
   };
 
+  // Lock background scroll on iOS and start at top
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    const originalTouchAction = document.body.style.touchAction;
+    document.body.style.overflow = 'hidden';
+    document.body.style.touchAction = 'none';
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.body.style.touchAction = originalTouchAction;
+    };
+  }, []);
+
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-fade-in">
-      <div className="relative w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-3xl p-6 sm:p-8 shadow-2xl shadow-black max-h-[90vh] overflow-y-auto">
-        {/* Close Button */}
-        <button
-          onClick={onClose}
-          className="absolute top-5 right-5 p-2 rounded-full bg-zinc-800 hover:bg-rose-600 text-zinc-400 hover:text-white transition-colors"
-          title="Cerrar"
-        >
-          <X className="w-5 h-5" />
-        </button>
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md animate-fade-in ios-scrollable"
+      style={{
+        paddingTop: 'max(0.75rem, env(safe-area-inset-top, 0px))',
+        paddingBottom: 'max(2rem, env(safe-area-inset-bottom, 0px))',
+      }}
+    >
+      <div
+        className="min-h-full w-full flex items-start sm:items-center justify-center p-2 sm:p-6"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        <div className="relative w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-3xl p-5 sm:p-8 shadow-2xl shadow-black my-2 sm:my-6">
+          {/* Close Button */}
+          <button
+            onClick={onClose}
+            className="absolute top-4 right-4 sm:top-5 sm:right-5 p-2 rounded-full bg-zinc-800 hover:bg-rose-600 text-zinc-400 hover:text-white transition-colors min-w-[38px] min-h-[38px] flex items-center justify-center"
+            title="Cerrar"
+          >
+            <X className="w-5 h-5" />
+          </button>
 
         {/* Modal Header */}
         <div className="flex items-center gap-3 mb-6">
@@ -543,5 +568,6 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({ onClose, onAddMovi
         </form>
       </div>
     </div>
-  );
+  </div>
+);
 };

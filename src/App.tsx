@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Film,
   Search,
@@ -28,6 +28,9 @@ import { MovieDetailModal } from './components/MovieDetailModal';
 import { AddMovieModal } from './components/AddMovieModal';
 import { EditMovieModal } from './components/EditMovieModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { PanicModal, PanicConfig, DEFAULT_PANIC_CONFIG } from './components/PanicModal';
+import { DisguiseScreen } from './components/DisguiseScreen';
+import { applyStealthMeta } from './utils/stealthHelper';
 import {
   saveMovieToFirestore,
   updateMovieInFirestore,
@@ -129,6 +132,93 @@ export default function App() {
   const [isAddMovieModalOpen, setIsAddMovieModalOpen] = useState(false);
   const [editingMovie, setEditingMovie] = useState<Movie | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+  // Discreet / Panic Escape Config (LanSchool / Quick exit to ALEKS, Pearson, Beeverso)
+  const [panicConfig, setPanicConfig] = useState<PanicConfig>(() => {
+    try {
+      const saved = localStorage.getItem('cinestream_panic_config');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return DEFAULT_PANIC_CONFIG;
+  });
+  const [isPanicModalOpen, setIsPanicModalOpen] = useState(false);
+  const [isDisguiseActive, setIsDisguiseActive] = useState(false);
+  const lastEscTimeRef = useRef<number>(0);
+
+  const triggerPanic = (cfg: PanicConfig = panicConfig) => {
+    // Immediately stop and close any playing media or open modals
+    setActivePlayerMovie(null);
+    setMiniPlayerMovie(null);
+    setDetailModalMovie(null);
+    setIsAddMovieModalOpen(false);
+    setIsEditModalOpen(false);
+    setIsPanicModalOpen(false);
+
+    let destinationUrl = 'https://www.aleks.com';
+    if (cfg.destination === 'aleks') destinationUrl = 'https://www.aleks.com';
+    else if (cfg.destination === 'pearson') destinationUrl = 'https://mylab.pearson.com';
+    else if (cfg.destination === 'beeverso') destinationUrl = 'https://beereaders.com';
+    else if (cfg.destination === 'classroom') destinationUrl = 'https://classroom.google.com';
+    else if (cfg.destination === 'custom' && cfg.customUrl.trim()) destinationUrl = cfg.customUrl.trim();
+
+    if (cfg.action === 'redirect') {
+      window.location.replace(destinationUrl);
+    } else {
+      setIsDisguiseActive(true);
+    }
+  };
+
+  const handleSavePanicConfig = (newCfg: PanicConfig) => {
+    setPanicConfig(newCfg);
+    try {
+      localStorage.setItem('cinestream_panic_config', JSON.stringify(newCfg));
+    } catch {}
+    showToast('🛡️ Ajustes de Escape Rápido guardados');
+  };
+
+  // Keyboard Hotkey listener for Panic Escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input/textarea unless it's Escape or F2
+      const isInput =
+        e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+
+      if (panicConfig.hotkey === 'double_esc') {
+        if (e.key === 'Escape') {
+          const now = Date.now();
+          if (now - lastEscTimeRef.current < 450) {
+            triggerPanic();
+          }
+          lastEscTimeRef.current = now;
+        }
+      } else if (panicConfig.hotkey === 'tilde') {
+        if (!isInput && (e.key === '`' || e.key === '~')) {
+          e.preventDefault();
+          triggerPanic();
+        }
+      } else if (panicConfig.hotkey === 'f2') {
+        if (e.key === 'F2') {
+          e.preventDefault();
+          triggerPanic();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [panicConfig]);
+
+  // Window Blur Auto-Trigger (if configured)
+  useEffect(() => {
+    if (!panicConfig.blurTrigger) return;
+
+    const handleBlur = () => {
+      triggerPanic();
+    };
+
+    window.addEventListener('blur', handleBlur);
+    return () => window.removeEventListener('blur', handleBlur);
+  }, [panicConfig]);
 
   // Manual or automatic Cloud Sync trigger
   const handleManualSync = async () => {
@@ -507,6 +597,7 @@ export default function App() {
         onOpenAddMovie={() => setIsAddMovieModalOpen(true)}
         cloudMoviesCount={firestoreMovies.length}
         onSyncCloud={handleManualSync}
+        onOpenPanicModal={() => setIsPanicModalOpen(true)}
       />
 
       {/* Main Content Area */}
@@ -1108,6 +1199,23 @@ export default function App() {
 
       {/* PWA Offline Mode Network Banner */}
       <OfflineIndicator />
+
+      {/* DISCREET / PANIC ESCAPE CONFIG MODAL */}
+      <PanicModal
+        isOpen={isPanicModalOpen}
+        onClose={() => setIsPanicModalOpen(false)}
+        config={panicConfig}
+        onSaveConfig={handleSavePanicConfig}
+        onTriggerPanic={() => triggerPanic()}
+      />
+
+      {/* IN-TAB CAMOUFLAGE SCREEN (ALEKS / Pearson / Beeverso Study Screen) */}
+      {isDisguiseActive && (
+        <DisguiseScreen
+          config={panicConfig}
+          onExitDisguise={() => setIsDisguiseActive(false)}
+        />
+      )}
     </div>
   );
 }
