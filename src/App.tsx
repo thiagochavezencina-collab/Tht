@@ -1035,6 +1035,10 @@ export default function App() {
           onSelectMovie={(m) => setActivePlayerMovie(m)}
           allMovies={allMovies}
           onProgressUpdate={handleProgressUpdate}
+          onUpdateMovie={(updated) => {
+            setMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+            setActivePlayerMovie(updated);
+          }}
         />
       )}
 

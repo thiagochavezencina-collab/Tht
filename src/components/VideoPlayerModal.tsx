@@ -21,10 +21,29 @@ import {
   Gauge,
   RefreshCw,
   Upload,
+  Link2,
+  Smartphone,
+  Laptop,
+  Cloud,
+  Check,
+  Search,
 } from 'lucide-react';
 import { Movie, PlayerMode, Episode } from '../types';
 import { parseVideoSource } from '../utils/videoHelper';
 import { saveVideoBlob, resolvePlayableVideoUrl } from '../utils/videoStorage';
+import { updateMovieInFirestore } from '../firestoreService';
+
+// Helper: Format seconds to MM:SS or HH:MM:SS
+function formatTime(seconds: number): string {
+  if (isNaN(seconds) || seconds < 0) return '00:00';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) {
+    return `${h}:${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+  }
+  return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+}
 
 interface VideoPlayerModalProps {
   movie: Movie;
@@ -34,6 +53,7 @@ interface VideoPlayerModalProps {
   allMovies: Movie[];
   initialTime?: number;
   onProgressUpdate: (movieId: string, currentTime: number, duration: number) => void;
+  onUpdateMovie?: (movie: Movie) => void;
 }
 
 export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
@@ -44,6 +64,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   allMovies,
   initialTime = 0,
   onProgressUpdate,
+  onUpdateMovie,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -67,30 +88,52 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const activeEpisodeId = activeEpisode?.id || movie.id;
   const rawVideoUrl = activeEpisode?.videoUrl || movie.videoUrl;
   const activeVideoUrl = rawVideoUrl;
-  const [playableVideoUrl, setPlayableVideoUrl] = useState<string>(rawVideoUrl);
+  const [playableVideoUrl, setPlayableVideoUrl] = useState<string>(rawVideoUrl || '');
 
   const activeDisplayTitle = activeEpisode
     ? `${movie.title} - E${activeEpisode.episodeNumber}: ${activeEpisode.title}`
     : movie.title;
 
+  // Source selection modal & custom URL states
+  const [showSourceModal, setShowSourceModal] = useState(false);
+  const [inputWebUrl, setInputWebUrl] = useState('');
+  const [isSavingUrl, setIsSavingUrl] = useState(false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
+
+  const [hasVideoError, setHasVideoError] = useState(() => !rawVideoUrl || rawVideoUrl.trim() === '');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [isPlaying, setIsPlaying] = useState(() => !!rawVideoUrl && rawVideoUrl.trim() !== '');
+
   // Resolve video URL from local IndexedDB if stored as a file
   useEffect(() => {
     let isCancelled = false;
-    setHasVideoError(false);
-    setErrorMessage('');
     setHasEnded(false);
     setCurrentTime(0);
 
-    resolvePlayableVideoUrl(activeEpisodeId, rawVideoUrl).then((liveUrl) => {
+    resolvePlayableVideoUrl(activeEpisodeId, rawVideoUrl || '').then((liveUrl) => {
       if (!isCancelled) {
-        setPlayableVideoUrl(liveUrl);
+        const hasValidUrl = liveUrl && liveUrl.trim() !== '' && !liveUrl.startsWith('blob:null');
+        if (!hasValidUrl) {
+          setPlayableVideoUrl('');
+          setHasVideoError(true);
+          setIsPlaying(false);
+          setErrorMessage(
+            movie.hasLocalFile
+              ? `El archivo "${movie.fileName || 'video local'}" fue añadido desde tu celular y reside físicamente en la memoria de ese teléfono.`
+              : 'No se encontró un archivo o enlace de video para reproducir.'
+          );
+        } else {
+          setPlayableVideoUrl(liveUrl);
+          setHasVideoError(false);
+          setErrorMessage('');
+        }
       }
     });
 
     return () => {
       isCancelled = true;
     };
-  }, [activeEpisodeId, rawVideoUrl]);
+  }, [activeEpisodeId, rawVideoUrl, movie.hasLocalFile, movie.fileName]);
 
   // Source detection
   const parsedSource = parseVideoSource(playableVideoUrl);
@@ -101,10 +144,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     parsedSource.type === 'googledrive' ||
     parsedSource.type === 'dailymotion';
 
-  const [hasVideoError, setHasVideoError] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-
-  const [isPlaying, setIsPlaying] = useState(true);
   const [currentTime, setCurrentTime] = useState(initialTime);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
@@ -132,29 +171,83 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   // Next episode availability
   const hasNextEpisode = hasEpisodes && currentEpisodeIndex < episodesList.length - 1;
 
-  // Handler for re-attaching local video file if browser lost blob
+  const isSpiderMan =
+    movie.title.toLowerCase().includes('spider') ||
+    movie.title.toLowerCase().includes('araña') ||
+    (movie.fileName ? movie.fileName.toLowerCase().includes('spider') : false);
+  const spiderManTrailer = 'https://www.youtube.com/watch?v=g4Hbz2jLxvQ';
+
+  // Save web URL to Firestore & play immediately
+  const handleSaveWebUrl = async (urlToSave?: string) => {
+    const targetUrl = (urlToSave || inputWebUrl).trim();
+    if (!targetUrl) return;
+
+    setIsSavingUrl(true);
+    setSaveSuccessMsg('');
+    try {
+      setPlayableVideoUrl(targetUrl);
+      setHasVideoError(false);
+      setErrorMessage('');
+      setShowSourceModal(false);
+      setIsPlaying(true);
+
+      const updatedMovie: Movie = {
+        ...movie,
+        videoUrl: targetUrl,
+        hasLocalFile: false,
+      };
+
+      if (hasEpisodes && activeEpisode) {
+        const updatedEpisodes = episodesList.map((ep, idx) =>
+          idx === currentEpisodeIndex ? { ...ep, videoUrl: targetUrl, hasLocalFile: false } : ep
+        );
+        updatedMovie.episodes = updatedEpisodes;
+      }
+
+      await updateMovieInFirestore(movie.id, {
+        videoUrl: targetUrl,
+        hasLocalFile: false,
+        ...(updatedMovie.episodes ? { episodes: updatedMovie.episodes } : {}),
+      });
+
+      if (onUpdateMovie) {
+        onUpdateMovie(updatedMovie);
+      }
+      setSaveSuccessMsg('¡Enlace guardado en la nube!');
+      setTimeout(() => setSaveSuccessMsg(''), 3000);
+    } catch (err) {
+      console.error('Error updating video URL in Firestore:', err);
+    } finally {
+      setIsSavingUrl(false);
+    }
+  };
+
+  // Handler for re-attaching local video file if browser lost blob or on secondary device
   const handleReattachVideoFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    await saveVideoBlob(activeEpisodeId, file);
-    const newLiveUrl = URL.createObjectURL(file);
-    setPlayableVideoUrl(newLiveUrl);
-    setHasVideoError(false);
-    setErrorMessage('');
-    setIsPlaying(true);
-  };
+    try {
+      await saveVideoBlob(activeEpisodeId, file);
+      const newLiveUrl = URL.createObjectURL(file);
+      setPlayableVideoUrl(newLiveUrl);
+      setHasVideoError(false);
+      setErrorMessage('');
+      setShowSourceModal(false);
+      setIsPlaying(true);
 
-  // Helper: Format seconds to MM:SS or HH:MM:SS
-  function formatTime(seconds: number): string {
-    if (isNaN(seconds) || seconds < 0) return '00:00';
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = Math.floor(seconds % 60);
-    if (h > 0) {
-      return `${h}:${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+      const updatedMovie: Movie = {
+        ...movie,
+        hasLocalFile: true,
+        fileName: file.name,
+      };
+
+      if (onUpdateMovie) {
+        onUpdateMovie(updatedMovie);
+      }
+    } catch (err) {
+      console.error('Error saving local video file:', err);
     }
-    return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
-  }
+  };
 
   // Handle auto-hide controls on inactivity
   const showControlsTemporarily = useCallback(() => {
@@ -432,59 +525,185 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               onClick={togglePlay}
             />
 
-            {/* Error Overlay with File Reattach & Fallback Options */}
-            {hasVideoError && (
-              <div className="absolute inset-0 bg-zinc-950/95 backdrop-blur-md z-35 flex flex-col items-center justify-center p-6 text-center animate-fade-in">
-                <div className="w-16 h-16 rounded-2xl bg-rose-950/80 border border-rose-500/50 flex items-center justify-center mb-4 shadow-xl">
-                  <AlertCircle className="w-8 h-8 text-rose-400" />
-                </div>
-                <h3 className="text-xl font-bold text-white mb-2">
-                  No se pudo reproducir este archivo de video
-                </h3>
-                <p className="text-zinc-400 text-xs sm:text-sm max-w-md mb-6 leading-relaxed">
-                  Si este video fue añadido desde tu ordenador, selecciónalo a continuación para guardarlo en la memoria permanente del navegador y reproducirlo con la barra de minutos y controles completos.
-                </p>
-
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                  <label className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-rose-950/50 transition-all hover:scale-105 cursor-pointer">
-                    <Upload className="w-4 h-4" />
-                    <span>Seleccionar archivo de video (.mp4, .mkv, .webm)</span>
-                    <input
-                      type="file"
-                      accept="video/*"
-                      onChange={handleReattachVideoFile}
-                      className="hidden"
-                    />
-                  </label>
-
-                  {playableVideoUrl && !playableVideoUrl.startsWith('blob:') && (
-                    <a
-                      href={playableVideoUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs sm:text-sm border border-zinc-700 transition-all"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      <span>Abrir Enlace Externo</span>
-                    </a>
-                  )}
-
-                  {hasNextEpisode && (
+            {/* Resolution / Source Selection Overlay (If error, missing URL, or requested by user) */}
+            {(hasVideoError || showSourceModal || !playableVideoUrl) && (
+              <div className="absolute inset-0 bg-zinc-950/95 backdrop-blur-lg z-35 flex flex-col items-center justify-center p-4 sm:p-6 overflow-y-auto animate-fade-in text-center">
+                <div className="max-w-xl w-full bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 sm:p-6 shadow-2xl relative text-left">
+                  {/* Close button if user manually opened source modal and video is playable */}
+                  {showSourceModal && playableVideoUrl && !hasVideoError && (
                     <button
-                      onClick={handleNextEpisode}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-semibold text-xs sm:text-sm border border-zinc-700 transition-all"
+                      onClick={() => setShowSourceModal(false)}
+                      className="absolute top-4 right-4 p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors"
+                      title="Volver a la reproducción"
                     >
-                      <SkipForward className="w-4 h-4" />
-                      <span>Probar Siguiente Episodio</span>
+                      <X className="w-4 h-4" />
                     </button>
                   )}
 
-                  <button
-                    onClick={onClose}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-xs sm:text-sm border border-zinc-700 transition-all"
-                  >
-                    <span>Cerrar</span>
-                  </button>
+                  {/* Header with device context badges */}
+                  <div className="flex flex-wrap items-center gap-2 mb-3">
+                    {movie.hasLocalFile ? (
+                      <>
+                        <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                          <Smartphone className="w-3.5 h-3.5" /> Subida desde celular
+                        </span>
+                        <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                          <Cloud className="w-3.5 h-3.5" /> Sincronizada en la nube
+                        </span>
+                      </>
+                    ) : (
+                      <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/30">
+                        <Upload className="w-3.5 h-3.5" /> Configurar Fuente de Video
+                      </span>
+                    )}
+                  </div>
+
+                  <h3 className="text-lg sm:text-xl font-bold text-white mb-1.5 flex items-center gap-2">
+                    <span>{movie.title}</span>
+                  </h3>
+
+                  {movie.hasLocalFile ? (
+                    <p className="text-zinc-400 text-xs sm:text-sm mb-5 leading-relaxed">
+                      Esta película se sincronizó en tu catálogo vía la nube. Sin embargo, el archivo de video local (<span className="text-amber-300 font-mono">{movie.fileName || 'video.mp4'}</span>) reside físicamente en la memoria de tu celular. Elige cómo deseas verla en esta laptop:
+                    </p>
+                  ) : (
+                    <p className="text-zinc-400 text-xs sm:text-sm mb-5 leading-relaxed">
+                      {errorMessage || 'Agrega un enlace web de streaming o carga un archivo local para reproducir en este dispositivo.'}
+                    </p>
+                  )}
+
+                  {saveSuccessMsg && (
+                    <div className="mb-4 p-3 rounded-xl bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-xs font-semibold flex items-center gap-2">
+                      <Check className="w-4 h-4 text-emerald-400" />
+                      <span>{saveSuccessMsg}</span>
+                    </div>
+                  )}
+
+                  <div className="space-y-4">
+                    {/* OPTION 1: Web / Streaming URL (Recommended for cross-device) */}
+                    <div className="p-4 rounded-xl bg-zinc-950/80 border border-rose-500/30 shadow-sm">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <div className="p-1.5 rounded-lg bg-rose-950/80 text-rose-400 border border-rose-500/40">
+                            <Link2 className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h4 className="text-white text-xs sm:text-sm font-bold">
+                              Opción 1: Enlace Online (Recomendado)
+                            </h4>
+                            <p className="text-zinc-400 text-[11px]">
+                              Guarda un link en la nube: funciona en laptop, celular y para todos.
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-rose-600/20 text-rose-300 border border-rose-500/30">
+                          Nube
+                        </span>
+                      </div>
+
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          handleSaveWebUrl();
+                        }}
+                        className="space-y-2.5 mt-3"
+                      >
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={inputWebUrl}
+                            onChange={(e) => setInputWebUrl(e.target.value)}
+                            placeholder="Pega URL (.mp4 directo, Google Drive, YouTube o stream)..."
+                            className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-rose-500"
+                          />
+                          <Link2 className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                          <button
+                            type="submit"
+                            disabled={isSavingUrl || !inputWebUrl.trim()}
+                            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+                          >
+                            <Cloud className="w-3.5 h-3.5" />
+                            <span>{isSavingUrl ? 'Guardando en la nube...' : 'Guardar y Reproducir'}</span>
+                          </button>
+
+                          {/* Quick Trailer Button */}
+                          {isSpiderMan ? (
+                            <button
+                              type="button"
+                              onClick={() => handleSaveWebUrl(spiderManTrailer)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 border border-rose-600/40 text-rose-300 text-xs font-semibold transition-colors cursor-pointer"
+                              title="Probar trailer oficial de Spider-Man"
+                            >
+                              <Film className="w-3.5 h-3.5 text-rose-400" />
+                              <span>Ver Trailer HD Oficial</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const q = encodeURIComponent(`${movie.title} trailer`);
+                                window.open(`https://www.youtube.com/results?search_query=${q}`, '_blank');
+                              }}
+                              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
+                            >
+                              <Search className="w-3 h-3" />
+                              <span>Buscar Trailer</span>
+                            </button>
+                          )}
+                        </div>
+                      </form>
+                    </div>
+
+                    {/* OPTION 2: Attach Local File on this laptop */}
+                    <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800">
+                      <div className="flex items-center gap-2 mb-2.5">
+                        <div className="p-1.5 rounded-lg bg-zinc-800 text-zinc-300 border border-zinc-700">
+                          <Laptop className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-white text-xs sm:text-sm font-bold">
+                            Opción 2: Cargar el archivo en esta Laptop
+                          </h4>
+                          <p className="text-zinc-400 text-[11px]">
+                            Si tienes el archivo en esta computadora, selecciónalo para guardarlo en la memoria del navegador.
+                          </p>
+                        </div>
+                      </div>
+
+                      <label className="flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold text-xs border border-zinc-700 hover:border-zinc-600 transition-all cursor-pointer">
+                        <Upload className="w-4 h-4 text-rose-400" />
+                        <span>Seleccionar archivo en tu laptop (.mp4, .mkv, .webm)</span>
+                        <input
+                          type="file"
+                          accept="video/*"
+                          onChange={handleReattachVideoFile}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Footer actions */}
+                  <div className="flex items-center justify-end gap-2 mt-5 pt-4 border-t border-zinc-800/80">
+                    {hasNextEpisode && (
+                      <button
+                        onClick={handleNextEpisode}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-semibold text-xs border border-zinc-700 transition-all"
+                      >
+                        <SkipForward className="w-3.5 h-3.5" />
+                        <span>Probar Siguiente Episodio</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={onClose}
+                      className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-xs border border-zinc-700 transition-all cursor-pointer"
+                    >
+                      Cerrar Reproductor
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -556,6 +775,16 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 <span className="hidden sm:inline">Episodios ({episodesList.length})</span>
               </button>
             )}
+
+            {/* Source switcher button */}
+            <button
+              onClick={() => setShowSourceModal(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors text-xs border border-zinc-700/60"
+              title="Cambiar fuente de video o archivo local"
+            >
+              <Upload className="w-3.5 h-3.5 text-rose-400" />
+              <span className="hidden sm:inline">Fuente de Video</span>
+            </button>
 
             {/* External link button */}
             <a

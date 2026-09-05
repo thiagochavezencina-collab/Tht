@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Edit3, Film, Tv, Clock, Calendar, Link2, Trash2, ListVideo } from 'lucide-react';
+import { X, Save, Edit3, Film, Tv, Clock, Calendar, Link2, Trash2, ListVideo, Upload } from 'lucide-react';
 import { Movie, Episode } from '../types';
+import { saveVideoBlob } from '../utils/videoStorage';
 
 interface EditMovieModalProps {
   isOpen: boolean;
@@ -27,6 +28,8 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
   const [backdropUrl, setBackdropUrl] = useState('');
   const [genres, setGenres] = useState('');
   const [episodes, setEpisodes] = useState<Episode[]>([]);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileName, setFileName] = useState('');
 
   useEffect(() => {
     if (movie) {
@@ -40,17 +43,25 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
       setBackdropUrl(movie.backdropUrl || '');
       setGenres((movie.genres || []).join(', '));
       setEpisodes(movie.episodes ? [...movie.episodes] : []);
+      setFileName(movie.fileName || '');
+      setSelectedFile(null);
     }
   }, [movie]);
 
   if (!isOpen || !movie) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) {
       alert('El nombre o título no puede estar vacío.');
       return;
     }
+
+    if (selectedFile) {
+      await saveVideoBlob(movie.id, selectedFile);
+    }
+
+    const finalVideoUrl = videoUrl.trim() || (selectedFile ? URL.createObjectURL(selectedFile) : movie.videoUrl);
 
     const updated: Movie = {
       ...movie,
@@ -59,7 +70,7 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
       year: Number(year) || 2024,
       duration: Number(duration) || 90,
       synopsis: synopsis.trim(),
-      videoUrl: videoUrl.trim() || movie.videoUrl,
+      videoUrl: finalVideoUrl,
       posterUrl: posterUrl.trim() || movie.posterUrl,
       backdropUrl: backdropUrl.trim() || movie.backdropUrl,
       genres: genres
@@ -67,6 +78,8 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
         .map((g) => g.trim())
         .filter(Boolean),
       episodes: movie.contentType === 'series' && episodes.length > 0 ? episodes : (movie.episodes || []),
+      hasLocalFile: !!selectedFile || movie.hasLocalFile,
+      fileName: selectedFile ? selectedFile.name : (fileName || movie.fileName || ''),
     };
 
     onSave(updated);
@@ -194,21 +207,54 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
             </div>
           </div>
 
-          {/* Video URL */}
-          <div>
-            <label className="block text-xs font-semibold text-zinc-300 mb-1">
-              Enlace de Video (YouTube, Vimeo, Google Drive o MP4 directo)
+          {/* Video URL & Local File */}
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-zinc-300">
+              Enlace de Video o Archivo
             </label>
             <div className="relative">
               <input
                 type="text"
                 value={videoUrl}
-                onChange={(e) => setVideoUrl(e.target.value)}
-                placeholder="https://youtube.com/watch?v=... o https://...video.mp4"
+                onChange={(e) => {
+                  setVideoUrl(e.target.value);
+                  if (e.target.value) setSelectedFile(null);
+                }}
+                placeholder="https://youtube.com/watch?v=... o enlace de Google Drive / MP4"
                 className="w-full bg-zinc-950 border border-zinc-700 rounded-xl pl-8 pr-3.5 py-2 text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-rose-500"
               />
               <Link2 className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-3" />
             </div>
+
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-950 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white text-xs font-medium cursor-pointer transition-colors">
+                <Upload className="w-3.5 h-3.5 text-rose-400" />
+                <span>
+                  {selectedFile
+                    ? `Archivo seleccionado: ${selectedFile.name}`
+                    : fileName
+                    ? `Archivo actual: ${fileName} (Cambiar)`
+                    : 'Cargar archivo de video local (.mp4, .mkv, .webm)'}
+                </span>
+                <input
+                  type="file"
+                  accept="video/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      setSelectedFile(f);
+                      setFileName(f.name);
+                    }
+                  }}
+                  className="hidden"
+                />
+              </label>
+            </div>
+            {fileName && !selectedFile && (
+              <p className="text-[11px] text-zinc-400">
+                Archivo asociado: <span className="text-zinc-200 font-mono">{fileName}</span>
+              </p>
+            )}
           </div>
 
           {/* Synopsis */}
