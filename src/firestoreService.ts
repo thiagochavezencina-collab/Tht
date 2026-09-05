@@ -46,18 +46,54 @@ function sanitizeForFirestore(val: any): any {
 }
 
 /**
- * Save a custom movie to Cloud Firestore.
- * If the video is a local blob/file URL, we warn or store with a flag.
+ * Prepare movie object for Cloud Firestore:
+ * Strips device-specific blob: URLs so they don't break on other devices,
+ * while preserving metadata, external streaming links, and local file indicators.
+ */
+function prepareMovieForFirestore(movie: Movie): Record<string, any> {
+  const isBlobVideo = typeof movie.videoUrl === 'string' && movie.videoUrl.startsWith('blob:');
+  const safeVideoUrl = isBlobVideo ? '' : movie.videoUrl || '';
+
+  const safeEpisodes = Array.isArray(movie.episodes)
+    ? movie.episodes.map((ep) => {
+        const isBlobEp = typeof ep.videoUrl === 'string' && ep.videoUrl.startsWith('blob:');
+        return {
+          id: ep.id,
+          title: ep.title || `Episodio ${ep.episodeNumber}`,
+          episodeNumber: ep.episodeNumber || 1,
+          duration: ep.duration || 45,
+          videoUrl: isBlobEp ? '' : ep.videoUrl || '',
+          hasLocalFile: isBlobEp || !!ep.hasLocalFile,
+          fileName: ep.fileName || '',
+          description: ep.description || '',
+          thumbnailUrl: ep.thumbnailUrl || '',
+        };
+      })
+    : undefined;
+
+  return {
+    ...movie,
+    videoUrl: safeVideoUrl,
+    hasLocalFile: isBlobVideo || !!movie.hasLocalFile,
+    fileName: movie.fileName || '',
+    ...(safeEpisodes ? { episodes: safeEpisodes } : {}),
+  };
+}
+
+/**
+ * Save a custom movie to Cloud Firestore for cross-device access (laptop, mobile, etc.).
  */
 export async function saveMovieToFirestore(movie: Movie): Promise<void> {
   try {
     const movieRef = doc(db, CUSTOM_MOVIES_COLLECTION, movie.id);
+    const prepared = prepareMovieForFirestore(movie);
     const sanitized = sanitizeForFirestore({
-      ...movie,
+      ...prepared,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
     await setDoc(movieRef, sanitized, { merge: true });
+    console.log(`[Firestore] Movie "${movie.title}" successfully synced to Cloud Firestore!`);
   } catch (error) {
     console.error('Error saving movie to Firestore:', error);
     throw error;
@@ -74,7 +110,8 @@ export async function updateMovieInFirestore(movieId: string, updates: Partial<M
       ...updates,
       updatedAt: serverTimestamp(),
     });
-    await updateDoc(movieRef, sanitized);
+    await setDoc(movieRef, sanitized, { merge: true });
+    console.log(`[Firestore] Movie ID "${movieId}" updated in Cloud Firestore!`);
   } catch (error) {
     console.error('Error updating movie in Firestore:', error);
     throw error;
@@ -88,9 +125,52 @@ export async function deleteMovieFromFirestore(movieId: string): Promise<void> {
   try {
     const movieRef = doc(db, CUSTOM_MOVIES_COLLECTION, movieId);
     await deleteDoc(movieRef);
+    console.log(`[Firestore] Movie ID "${movieId}" deleted from Cloud Firestore!`);
   } catch (error) {
     console.error('Error deleting movie from Firestore:', error);
     throw error;
+  }
+}
+
+/**
+ * Fetch all custom movies from Cloud Firestore directly once.
+ */
+export async function getCustomMoviesFromFirestore(): Promise<Movie[]> {
+  try {
+    const moviesRef = collection(db, CUSTOM_MOVIES_COLLECTION);
+    const snapshot = await getDocs(moviesRef);
+    const list: Movie[] = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      list.push({
+        id: docSnap.id,
+        contentType: data.contentType || 'movie',
+        title: data.title || '',
+        originalTitle: data.originalTitle || '',
+        year: data.year || 2024,
+        duration: data.duration || 90,
+        rating: data.rating || 9.0,
+        ageRating: data.ageRating || '+13',
+        genres: data.genres || ['Película'],
+        director: data.director || 'Comunidad',
+        cast: data.cast || ['Reparto'],
+        synopsis: data.synopsis || '',
+        posterUrl: data.posterUrl || '',
+        backdropUrl: data.backdropUrl || '',
+        videoUrl: data.videoUrl || '',
+        episodes: data.episodes || undefined,
+        seasonsCount: data.seasonsCount || undefined,
+        quality: data.quality || 'Full HD 1080p',
+        viewsCount: data.viewsCount || 1,
+        addedByUser: true,
+        hasLocalFile: !!data.hasLocalFile,
+        fileName: data.fileName || '',
+      });
+    });
+    return list;
+  } catch (err) {
+    console.warn('[Firestore] Error direct fetching custom movies:', err);
+    return [];
   }
 }
 
@@ -127,6 +207,8 @@ export function subscribeToCustomMovies(onUpdate: (movies: Movie[]) => void): ()
             quality: data.quality || 'Full HD 1080p',
             viewsCount: data.viewsCount || 1,
             addedByUser: true,
+            hasLocalFile: !!data.hasLocalFile,
+            fileName: data.fileName || '',
           });
         });
         onUpdate(movies);

@@ -9,6 +9,9 @@ export interface Episode {
   videoUrl: string;
   synopsis?: string;
   thumbnailUrl?: string;
+  hasLocalFile?: boolean;
+  fileName?: string;
+  description?: string;
 }
 
 export interface Movie {

@@ -31,10 +31,12 @@ import {
   saveMovieToFirestore,
   updateMovieInFirestore,
   deleteMovieFromFirestore,
+  getCustomMoviesFromFirestore,
   subscribeToCustomMovies,
   saveReviewToFirestore,
   subscribeToReviews,
 } from './firestoreService';
+import { deleteVideoBlob } from './utils/videoStorage';
 
 export default function App() {
   // Cloud custom movies synced via Firestore
@@ -95,6 +97,24 @@ export default function App() {
     return INITIAL_REVIEWS;
   });
 
+  // Deleted movies tracking (persists removals of both custom and catalog items)
+  const [deletedMovieIds, setDeletedMovieIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('cinestream_deleted_ids');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+
+  // User feedback toast notifications
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((cur) => (cur === msg ? null : cur));
+    }, 4500);
+  };
+
   // Navigation & Filter states
   const [activeTab, setActiveTab] = useState<'inicio' | 'peliculas' | 'series' | 'mi-lista' | 'historial'>('inicio');
   const [searchQuery, setSearchQuery] = useState('');
@@ -109,11 +129,45 @@ export default function App() {
   const [editingMovie, setEditingMovie] = useState<Movie | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
-  // Subscribe to real-time Cloud Firestore updates
+  // Manual or automatic Cloud Sync trigger
+  const handleManualSync = async () => {
+    try {
+      const cloudMovies = await getCustomMoviesFromFirestore();
+      if (cloudMovies.length > 0) {
+        setFirestoreMovies(cloudMovies);
+      }
+      showToast(`☁️ Sincronización en la nube completa (${cloudMovies.length} títulos en la nube)`);
+    } catch {
+      showToast('⚠️ No se pudo conectar a la nube en este momento');
+    }
+  };
+
+  // Cloud Firestore Sync: Direct Fetch + Real-Time Listener + LocalStorage Auto-Sync
   useEffect(() => {
+    // 1. Immediate fetch from Cloud Firestore
+    getCustomMoviesFromFirestore().then((cloudMovies) => {
+      if (cloudMovies.length > 0) {
+        setFirestoreMovies(cloudMovies);
+      }
+    });
+
+    // 2. Real-time subscription for instant updates across devices (phone <-> laptop)
     const unsubscribeMovies = subscribeToCustomMovies((cloudMovies) => {
       setFirestoreMovies(cloudMovies);
     });
+
+    // 3. Auto-sync previously added local movies to Cloud Firestore so they become available cross-device!
+    try {
+      const saved = localStorage.getItem('cinestream_custom_movies');
+      if (saved) {
+        const localList: Movie[] = JSON.parse(saved);
+        if (Array.isArray(localList) && localList.length > 0) {
+          localList.forEach((m) => {
+            saveMovieToFirestore(m).catch(() => {});
+          });
+        }
+      }
+    } catch {}
 
     const unsubscribeReviews = subscribeToReviews((cloudReviews) => {
       setReviewsMap((prev) => {
@@ -134,17 +188,24 @@ export default function App() {
     };
   }, []);
 
-  // Merge base/local movies with Firestore cloud movies
+  // Merge base/local movies with Firestore cloud movies, excluding deleted items
   const allMovies = useMemo(() => {
+    const deletedSet = new Set(deletedMovieIds);
     const movieMap = new Map<string, Movie>();
     // Start with catalog movies to ensure base library is always active
-    INITIAL_MOVIES.forEach((m) => movieMap.set(m.id, m));
+    INITIAL_MOVIES.forEach((m) => {
+      if (!deletedSet.has(m.id)) movieMap.set(m.id, m);
+    });
     // Overlay local/custom movies
-    movies.forEach((m) => movieMap.set(m.id, m));
+    movies.forEach((m) => {
+      if (!deletedSet.has(m.id)) movieMap.set(m.id, m);
+    });
     // Overlay real-time cloud movies from Firestore
-    firestoreMovies.forEach((m) => movieMap.set(m.id, m));
+    firestoreMovies.forEach((m) => {
+      if (!deletedSet.has(m.id)) movieMap.set(m.id, m);
+    });
     return Array.from(movieMap.values());
-  }, [movies, firestoreMovies]);
+  }, [movies, firestoreMovies, deletedMovieIds]);
 
   // Sync to LocalStorage
   useEffect(() => {
@@ -181,14 +242,13 @@ export default function App() {
       localStorage.setItem('cinestream_custom_movies', JSON.stringify([newMovie, ...list]));
     } catch {}
 
-    // Save to Cloud Firestore for cross-session and real-time syncing
-    // (Only save external URLs to Firestore, blob: URLs are device-local)
-    if (!newMovie.videoUrl.startsWith('blob:')) {
-      try {
-        await saveMovieToFirestore(newMovie);
-      } catch (err) {
-        console.warn('Could not sync movie to cloud Firestore, kept in local storage:', err);
-      }
+    // Save to Cloud Firestore for cross-session and real-time syncing across all devices
+    try {
+      await saveMovieToFirestore(newMovie);
+      showToast(`☁️ ¡"${newMovie.title}" guardada y sincronizada en la nube! Visible en tu laptop y móvil.`);
+    } catch (err) {
+      console.warn('Could not sync movie to cloud Firestore, kept in local storage:', err);
+      showToast(`💾 Guardada localmente en este dispositivo.`);
     }
 
     // Automatically launch the player for the added movie!
@@ -220,8 +280,10 @@ export default function App() {
     // 3. Update in Cloud Firestore
     try {
       await updateMovieInFirestore(updated.id, updated);
+      showToast(`✏️ ¡"${updated.title}" actualizada y sincronizada en la nube!`);
     } catch (err) {
       console.warn('Could not update movie in Firestore:', err);
+      showToast(`✏️ Cambios guardados localmente.`);
     }
 
     // 4. Update modals and active player if open
@@ -238,10 +300,19 @@ export default function App() {
 
   // Handler: Delete Movie or Series
   const handleDeleteMovie = async (movieToDelete: Movie) => {
-    // 1. Remove from local state
+    // 1. Track deleted id in state and localStorage
+    setDeletedMovieIds((prev) => {
+      const next = [...prev, movieToDelete.id];
+      try {
+        localStorage.setItem('cinestream_deleted_ids', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    // 2. Remove from local movies state
     setMovies((prev) => prev.filter((m) => m.id !== movieToDelete.id));
 
-    // 2. Remove from localStorage
+    // 3. Remove from localStorage
     try {
       const customSaved = localStorage.getItem('cinestream_custom_movies');
       if (customSaved) {
@@ -253,7 +324,7 @@ export default function App() {
       }
     } catch {}
 
-    // 3. Remove from watchlist and progress if exists
+    // 4. Remove from watchlist and progress if exists
     setWatchlist((prev) => prev.filter((id) => id !== movieToDelete.id));
     setWatchProgressMap((prev) => {
       const next = { ...prev };
@@ -261,14 +332,22 @@ export default function App() {
       return next;
     });
 
-    // 4. Delete from Cloud Firestore
-    try {
-      await deleteMovieFromFirestore(movieToDelete.id);
-    } catch (err) {
-      console.warn('Could not delete movie from Firestore:', err);
+    // 5. Clean up local video file in IndexedDB
+    deleteVideoBlob(movieToDelete.id);
+    if (movieToDelete.episodes) {
+      movieToDelete.episodes.forEach((ep) => deleteVideoBlob(ep.id));
     }
 
-    // 5. Close modals or player if it was that movie
+    // 6. Delete from Cloud Firestore
+    try {
+      await deleteMovieFromFirestore(movieToDelete.id);
+      showToast(`🗑️ "${movieToDelete.title}" eliminada de la nube y tu catálogo.`);
+    } catch (err) {
+      console.warn('Could not delete movie from Firestore:', err);
+      showToast(`🗑️ "${movieToDelete.title}" eliminada.`);
+    }
+
+    // 7. Close modals or player if it was that movie
     if (detailModalMovie?.id === movieToDelete.id) {
       setDetailModalMovie(null);
     }
@@ -425,6 +504,8 @@ export default function App() {
         setSearchQuery={setSearchQuery}
         watchlistCount={watchlist.length}
         onOpenAddMovie={() => setIsAddMovieModalOpen(true)}
+        cloudMoviesCount={firestoreMovies.length}
+        onSyncCloud={handleManualSync}
       />
 
       {/* Main Content Area */}
@@ -582,7 +663,7 @@ export default function App() {
             <CategoryRow
               title="Populares y Más Vistas"
               subtitle="Las películas preferidas por los cinéfilos en la plataforma"
-              movies={[...movies].sort((a, b) => b.viewsCount - a.viewsCount)}
+              movies={[...allMovies].sort((a, b) => b.viewsCount - a.viewsCount)}
               onPlay={(m) => {
                 setActivePlayerMovie(m);
                 setMiniPlayerMovie(null);
@@ -1010,6 +1091,14 @@ export default function App() {
           onSave={handleSaveEditedMovie}
           onDelete={handleDeleteMovie}
         />
+      )}
+
+      {/* Floating Cloud Sync and User Action Notification Toast */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-sm bg-zinc-900/95 border border-zinc-700 text-white px-4 py-3 rounded-2xl shadow-2xl shadow-black/80 flex items-center gap-3 backdrop-blur-xl animate-fade-in pointer-events-auto">
+          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0 shadow-sm shadow-emerald-500/50 animate-pulse" />
+          <span className="text-xs sm:text-sm font-medium leading-snug">{toastMessage}</span>
+        </div>
       )}
     </div>
   );

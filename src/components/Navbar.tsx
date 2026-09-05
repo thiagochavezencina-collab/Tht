@@ -20,6 +20,8 @@ interface NavbarProps {
   setSearchQuery: (query: string) => void;
   watchlistCount: number;
   onOpenAddMovie: () => void;
+  cloudMoviesCount?: number;
+  onSyncCloud?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -29,6 +31,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   setSearchQuery,
   watchlistCount,
   onOpenAddMovie,
+  cloudMoviesCount = 0,
+  onSyncCloud,
 }) => {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -170,6 +174,21 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </div>
           </div>
+
+          {/* Cloud Sync Status Badge */}
+          <button
+            onClick={onSyncCloud}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-300 text-xs font-medium transition-colors active:scale-95"
+            title="Sincronización en la nube (Firestore): Haz clic para sincronizar tus películas entre tu celular y laptop"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50 animate-pulse" />
+            <span className="hidden lg:inline text-zinc-300">Nube</span>
+            {cloudMoviesCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-md bg-emerald-950/90 border border-emerald-500/40 text-emerald-400 font-bold text-[10px]">
+                {cloudMoviesCount}
+              </span>
+            )}
+          </button>
 
           {/* DOWNLOAD FOR VERCEL BUTTON */}
           <button
