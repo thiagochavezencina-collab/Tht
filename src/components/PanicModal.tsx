@@ -24,7 +24,7 @@ export interface PanicConfig {
 export const DEFAULT_PANIC_CONFIG: PanicConfig = {
   destination: 'aleks',
   customUrl: '',
-  action: 'redirect',
+  action: 'disguise',
   blurTrigger: false,
   hotkey: 'double_esc',
   stealthMode: false,
@@ -33,27 +33,27 @@ export const DEFAULT_PANIC_CONFIG: PanicConfig = {
 export const PANIC_DESTINATIONS = [
   {
     id: 'aleks',
-    name: 'ALEKS (McGraw Hill)',
+    name: 'ALEKS® (McGraw Hill)',
     url: 'https://www.aleks.com',
-    desc: 'Plataforma educativa de matemáticas y aprendizaje adaptativo',
-    iconText: 'AL',
-    color: 'from-amber-600 to-orange-600',
+    desc: 'Continuar mi ruta, gráfico circular ALEKS y QuickTables de matemáticas',
+    iconText: 'AK',
+    color: 'from-amber-600 to-blue-900',
   },
   {
     id: 'pearson',
-    name: 'Pearson (MyLab / Realize)',
-    url: 'https://mylab.pearson.com',
-    desc: 'Portal escolar y libros digitales de Pearson',
-    iconText: 'P',
-    color: 'from-blue-600 to-cyan-600',
+    name: 'Pearson English Portal',
+    url: 'https://english-dashboard.pearson.com',
+    desc: 'MyEnglishLab: ejercicios de listening, gramática B2 y vocabulario en inglés',
+    iconText: 'PE',
+    color: 'from-sky-700 to-cyan-600',
   },
   {
     id: 'beeverso',
-    name: 'Beereaders / Beeverso',
-    url: 'https://beereaders.com',
-    desc: 'Plataforma de comprensión lectora escolar',
-    iconText: 'BV',
-    color: 'from-emerald-600 to-teal-600',
+    name: 'Beereaders (Lectura)',
+    url: 'https://app.beereaders.com',
+    desc: 'Comprensión lectora, nivel Lexile, textos literarios y Beecoins',
+    iconText: 'BR',
+    color: 'from-purple-800 to-amber-500',
   },
   {
     id: 'classroom',
@@ -226,6 +226,29 @@ export const PanicModal: React.FC<PanicModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
                 type="button"
+                onClick={() => setLocalConfig({ ...localConfig, action: 'disguise' })}
+                className={`p-3 rounded-2xl border text-left transition-all ${
+                  localConfig.action === 'disguise'
+                    ? 'bg-zinc-800 border-amber-500 text-white'
+                    : 'bg-zinc-950/40 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2 font-bold text-xs text-white">
+                    <EyeOff className="w-4 h-4 text-amber-400" />
+                    <span>Camuflaje 1:1 (Recomendado)</span>
+                  </div>
+                  <span className="text-[10px] bg-emerald-950/80 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-bold">
+                    Móvil y PC
+                  </span>
+                </div>
+                <p className="text-[10px] text-zinc-400 leading-relaxed">
+                  Activa la pantalla idéntica de ALEKS, Pearson o Beeverso con minijuegos funcionales sin salir de la app ni ponerse en blanco.
+                </p>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setLocalConfig({ ...localConfig, action: 'redirect' })}
                 className={`p-3 rounded-2xl border text-left transition-all ${
                   localConfig.action === 'redirect'
@@ -235,28 +258,10 @@ export const PanicModal: React.FC<PanicModalProps> = ({
               >
                 <div className="flex items-center gap-2 font-bold text-xs text-white mb-1">
                   <ExternalLink className="w-4 h-4 text-amber-400" />
-                  <span>Redirección Total (Recomendado)</span>
+                  <span>Redirección a Web Oficial</span>
                 </div>
                 <p className="text-[10px] text-zinc-400 leading-relaxed">
-                  Cierra la pestaña actual y abre directamente Pearson, ALEKS o Beeverso reemplazando el historial.
-                </p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setLocalConfig({ ...localConfig, action: 'disguise' })}
-                className={`p-3 rounded-2xl border text-left transition-all ${
-                  localConfig.action === 'disguise'
-                    ? 'bg-zinc-800 border-amber-500 text-white'
-                    : 'bg-zinc-950/40 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                }`}
-              >
-                <div className="flex items-center gap-2 font-bold text-xs text-white mb-1">
-                  <EyeOff className="w-4 h-4 text-amber-400" />
-                  <span>Camuflaje en Pestaña</span>
-                </div>
-                <p className="text-[10px] text-zinc-400 leading-relaxed">
-                  Silencia todo y muestra una pantalla falsa realista de estudio sin abandonar la página web.
+                  Navega fuera al sitio web real. (Nota: en celulares o iframes puede salir en blanco por seguridad de la escuela).
                 </p>
               </button>
             </div>

@@ -137,7 +137,14 @@ export default function App() {
   const [panicConfig, setPanicConfig] = useState<PanicConfig>(() => {
     try {
       const saved = localStorage.getItem('cinestream_panic_config');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Default to disguise mode so mobile and iframes don't load a blocked blank screen
+        if (!parsed.action || parsed.action === 'redirect') {
+          parsed.action = 'disguise';
+        }
+        return parsed;
+      }
     } catch {}
     return DEFAULT_PANIC_CONFIG;
   });
@@ -161,9 +168,16 @@ export default function App() {
     else if (cfg.destination === 'classroom') destinationUrl = 'https://classroom.google.com';
     else if (cfg.destination === 'custom' && cfg.customUrl.trim()) destinationUrl = cfg.customUrl.trim();
 
-    if (cfg.action === 'redirect') {
-      window.location.replace(destinationUrl);
+    // Check if redirect was requested and if we are in an iframe or mobile container
+    const isInIframe = window.self !== window.top;
+    if (cfg.action === 'redirect' && !isInIframe) {
+      try {
+        window.location.replace(destinationUrl);
+      } catch {
+        setIsDisguiseActive(true);
+      }
     } else {
+      // Default & Safe: Activate in-app authentic 1:1 replica of ALEKS, Pearson or Beeverso with minigames
       setIsDisguiseActive(true);
     }
   };
@@ -219,6 +233,11 @@ export default function App() {
     window.addEventListener('blur', handleBlur);
     return () => window.removeEventListener('blur', handleBlur);
   }, [panicConfig]);
+
+  // Apply educational camouflage (title, favicon) when stealth mode changes
+  useEffect(() => {
+    applyStealthMeta(panicConfig.stealthMode, panicConfig.destination);
+  }, [panicConfig.stealthMode, panicConfig.destination]);
 
   // Manual or automatic Cloud Sync trigger
   const handleManualSync = async () => {
@@ -598,6 +617,7 @@ export default function App() {
         cloudMoviesCount={firestoreMovies.length}
         onSyncCloud={handleManualSync}
         onOpenPanicModal={() => setIsPanicModalOpen(true)}
+        stealthConfig={panicConfig}
       />
 
       {/* Main Content Area */}
