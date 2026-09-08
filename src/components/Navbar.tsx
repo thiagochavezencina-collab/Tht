@@ -11,14 +11,15 @@ import {
   CheckCircle2,
   Loader2,
   GraduationCap,
+  Sparkles,
 } from 'lucide-react';
 import { downloadProjectZip } from '../utils/exportProject';
 import { PWAInstallButton } from './PWAInstallButton';
 import { PanicConfig, PANIC_DESTINATIONS } from './PanicModal';
 
 interface NavbarProps {
-  activeTab: 'inicio' | 'peliculas' | 'series' | 'mi-lista' | 'historial';
-  setActiveTab: (tab: 'inicio' | 'peliculas' | 'series' | 'mi-lista' | 'historial') => void;
+  activeTab: 'inicio' | 'peliculas' | 'series' | 'mi-lista' | 'historial' | 'sugerencias';
+  setActiveTab: (tab: 'inicio' | 'peliculas' | 'series' | 'mi-lista' | 'historial' | 'sugerencias') => void;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   watchlistCount: number;
@@ -166,6 +167,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Clapperboard className="w-3.5 h-3.5" />
               <span>Continuar</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('sugerencias')}
+              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors ${
+                activeTab === 'sugerencias'
+                  ? 'bg-zinc-800 text-white font-semibold'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>Sugerencias</span>
             </button>
           </nav>
         </div>
@@ -321,6 +333,14 @@ export const Navbar: React.FC<NavbarProps> = ({
           }`}
         >
           Historial
+        </button>
+        <button
+          onClick={() => setActiveTab('sugerencias')}
+          className={`px-2.5 py-1 rounded-md ${
+            activeTab === 'sugerencias' ? 'text-rose-500 font-semibold' : 'text-zinc-400'
+          }`}
+        >
+          Sugerencias
         </button>
       </div>
     </header>

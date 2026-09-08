@@ -115,6 +115,66 @@
         }
       },
       "required": ["id", "movieId", "rating", "comment"]
+    },
+    "MovieSuggestion": {
+      "title": "MovieSuggestion",
+      "description": "Sugerencia o petición de película o serie realizada por los usuarios.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID único de la sugerencia"
+        },
+        "title": {
+          "type": "string",
+          "description": "Título de la película o serie sugerida"
+        },
+        "contentType": {
+          "type": "string",
+          "description": "Tipo de contenido: movie, series, anime, documental"
+        },
+        "genre": {
+          "type": "string",
+          "description": "Género principal"
+        },
+        "year": {
+          "type": "number",
+          "description": "Año estimado de estreno"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Motivo de la sugerencia o notas"
+        },
+        "suggestedBy": {
+          "type": "string",
+          "description": "Nombre o apodo ('Anónimo' por defecto para el público)"
+        },
+        "senderDetails": {
+          "type": "string",
+          "description": "Detalle privado del remitente visible exclusivamente para el administrador"
+        },
+        "isAnonymous": {
+          "type": "boolean",
+          "description": "Indica si el envío fue completamente anónimo"
+        },
+        "userAvatar": {
+          "type": "string",
+          "description": "Avatar o emoji del usuario"
+        },
+        "votes": {
+          "type": "number",
+          "description": "Cantidad de votos de la comunidad"
+        },
+        "status": {
+          "type": "string",
+          "description": "Estado: pending, reviewing, accepted, available"
+        },
+        "date": {
+          "type": "string",
+          "description": "Fecha de la sugerencia"
+        }
+      },
+      "required": ["id", "title", "suggestedBy"]
     }
   },
   "firestore": {
@@ -129,6 +189,12 @@
         "$ref": "#/entities/MovieReview"
       },
       "description": "Colección de reseñas enviadas por los usuarios"
+    },
+    "/movie_suggestions/{suggestionId}": {
+      "schema": {
+        "$ref": "#/entities/MovieSuggestion"
+      },
+      "description": "Colección de sugerencias y peticiones de la comunidad"
     }
   }
 }

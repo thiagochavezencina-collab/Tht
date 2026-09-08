@@ -1,10 +1,13 @@
-import { Movie, UserReview } from '../types';
+import { Movie, UserReview, MovieSuggestion } from '../types';
 
 // El usuario solicitó borrar todas las películas predeterminadas.
 // Solo aparecerán las películas y series que el usuario o la comunidad suban.
 export const INITIAL_MOVIES: Movie[] = [];
 
 export const INITIAL_REVIEWS: Record<string, UserReview[]> = {};
+
+// Sin sugerencias falsas: solo sugerencias enviadas de forma anónima por los usuarios reales.
+export const INITIAL_SUGGESTIONS: MovieSuggestion[] = [];
 
 export const GENRES = [
   'Todos',

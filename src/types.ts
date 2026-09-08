@@ -65,4 +65,21 @@ export interface UserReview {
   date: string;
 }
 
+export interface MovieSuggestion {
+  id: string;
+  title: string;
+  contentType: 'movie' | 'series' | 'anime' | 'documental';
+  genre?: string;
+  year?: number;
+  reason?: string;
+  suggestedBy: string; // "Anónimo" for public display
+  senderDetails?: string; // Private sender info / device details only visible to the admin (Thiago)
+  isAnonymous?: boolean;
+  userAvatar?: string;
+  votes: number;
+  status: 'pending' | 'reviewing' | 'accepted' | 'available';
+  date: string;
+  voters?: string[];
+}
+
 export type PlayerMode = 'modal' | 'theater' | 'mini' | 'fullscreen';

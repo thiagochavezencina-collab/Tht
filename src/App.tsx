@@ -16,8 +16,8 @@ import {
   HelpCircle,
   Tv
 } from 'lucide-react';
-import { Movie, WatchProgress, UserReview } from './types';
-import { INITIAL_MOVIES, INITIAL_REVIEWS, GENRES } from './data/movies';
+import { Movie, WatchProgress, UserReview, MovieSuggestion } from './types';
+import { INITIAL_MOVIES, INITIAL_REVIEWS, INITIAL_SUGGESTIONS, GENRES } from './data/movies';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';
 import { CategoryRow } from './components/CategoryRow';
@@ -27,6 +27,7 @@ import { MiniPlayer } from './components/MiniPlayer';
 import { MovieDetailModal } from './components/MovieDetailModal';
 import { AddMovieModal } from './components/AddMovieModal';
 import { EditMovieModal } from './components/EditMovieModal';
+import { SuggestionsSection } from './components/SuggestionsSection';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { PanicModal, PanicConfig, DEFAULT_PANIC_CONFIG } from './components/PanicModal';
 import { DisguiseScreen } from './components/DisguiseScreen';
@@ -39,6 +40,13 @@ import {
   subscribeToCustomMovies,
   saveReviewToFirestore,
   subscribeToReviews,
+  saveSuggestionToFirestore,
+  voteSuggestionInFirestore,
+  getSuggestionsFromFirestore,
+  subscribeToSuggestions,
+  deleteSuggestionFromFirestore,
+  updateSuggestionStatusInFirestore,
+  purgeMockSuggestionsFromFirestore,
 } from './firestoreService';
 import { deleteVideoBlob } from './utils/videoStorage';
 
@@ -120,10 +128,37 @@ export default function App() {
   };
 
   // Navigation & Filter states
-  const [activeTab, setActiveTab] = useState<'inicio' | 'peliculas' | 'series' | 'mi-lista' | 'historial'>('inicio');
+  const [activeTab, setActiveTab] = useState<
+    'inicio' | 'peliculas' | 'series' | 'mi-lista' | 'historial' | 'sugerencias'
+  >('inicio');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGenre, setSelectedGenre] = useState('Todos');
   const [sortBy, setSortBy] = useState<'rating' | 'year' | 'duration' | 'views'>('rating');
+
+  // Community Suggestions & Requests state (sanitized of any fake mock suggestions)
+  const [suggestions, setSuggestions] = useState<MovieSuggestion[]>(() => {
+    try {
+      const saved = localStorage.getItem('cinestream_suggestions');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const clean = parsed.filter(
+            (s: MovieSuggestion) => s && s.id && !['sug-1', 'sug-2', 'sug-3', 'sug-4'].includes(s.id)
+          );
+          return clean;
+        }
+      }
+    } catch {}
+    return INITIAL_SUGGESTIONS;
+  });
+
+  const [userVotedSuggestionIds, setUserVotedSuggestionIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('cinestream_user_voted_sug_ids');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
 
   // Modal / Playback states
   const [activePlayerMovie, setActivePlayerMovie] = useState<Movie | null>(null);
@@ -292,11 +327,130 @@ export default function App() {
       });
     });
 
+    // 4. Suggestions listener, fetch & purge legacy fake suggestions
+    purgeMockSuggestionsFromFirestore();
+
+    getSuggestionsFromFirestore().then((cloudSugs) => {
+      setSuggestions(cloudSugs);
+    });
+
+    const unsubscribeSuggestions = subscribeToSuggestions((cloudSugs) => {
+      setSuggestions(cloudSugs);
+    });
+
     return () => {
       unsubscribeMovies();
       unsubscribeReviews();
+      unsubscribeSuggestions();
     };
   }, []);
+
+  // Save suggestions & votes to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('cinestream_suggestions', JSON.stringify(suggestions));
+    } catch {}
+  }, [suggestions]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('cinestream_user_voted_sug_ids', JSON.stringify(userVotedSuggestionIds));
+    } catch {}
+  }, [userVotedSuggestionIds]);
+
+  // Suggestions handlers (Anonymous Community Suggestions)
+  const handleAddSuggestion = async (
+    sugData: Omit<MovieSuggestion, 'id' | 'votes' | 'date' | 'voters'>
+  ) => {
+    const newSug: MovieSuggestion = {
+      ...sugData,
+      id: `sug_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      suggestedBy: 'Anónimo',
+      isAnonymous: true,
+      userAvatar: '🔒',
+      votes: 1,
+      date: 'Reciente',
+      voters: ['me'],
+    };
+
+    setSuggestions((prev) => [newSug, ...prev]);
+    setUserVotedSuggestionIds((prev) => [...prev, newSug.id]);
+    showToast(`🔒 ¡Sugerencia enviada de forma anónima!`);
+
+    try {
+      await saveSuggestionToFirestore(newSug);
+    } catch (err) {
+      console.warn('Error saving suggestion to Firestore:', err);
+    }
+  };
+
+  const handleDeleteSuggestion = async (sugId: string) => {
+    setSuggestions((prev) => prev.filter((s) => s.id !== sugId));
+    showToast('🗑️ Sugerencia eliminada');
+    try {
+      await deleteSuggestionFromFirestore(sugId);
+    } catch (err) {
+      console.warn('Error deleting suggestion from Firestore:', err);
+    }
+  };
+
+  const handleUpdateSuggestionStatus = async (
+    sugId: string,
+    status: MovieSuggestion['status']
+  ) => {
+    setSuggestions((prev) =>
+      prev.map((s) => (s.id === sugId ? { ...s, status } : s))
+    );
+    showToast(`Estado actualizado: ${status}`);
+    try {
+      await updateSuggestionStatusInFirestore(sugId, status);
+    } catch (err) {
+      console.warn('Error updating suggestion status:', err);
+    }
+  };
+
+  const handleVoteSuggestion = async (sugId: string) => {
+    const hasVoted = userVotedSuggestionIds.includes(sugId);
+    const updatedVotedIds = hasVoted
+      ? userVotedSuggestionIds.filter((id) => id !== sugId)
+      : [...userVotedSuggestionIds, sugId];
+
+    setUserVotedSuggestionIds(updatedVotedIds);
+
+    let targetSug: MovieSuggestion | undefined;
+
+    setSuggestions((prev) =>
+      prev.map((s) => {
+        if (s.id === sugId) {
+          const newVotes = hasVoted ? Math.max(0, s.votes - 1) : s.votes + 1;
+          const updated = {
+            ...s,
+            votes: newVotes,
+            voters: hasVoted
+              ? (s.voters || []).filter((v) => v !== 'me')
+              : [...(s.voters || []), 'me'],
+          };
+          targetSug = updated;
+          return updated;
+        }
+        return s;
+      })
+    );
+
+    if (hasVoted) {
+      showToast('Voto removido');
+    } else {
+      showToast('👍 ¡Voto registrado para esta sugerencia!');
+    }
+
+    if (targetSug) {
+      try {
+        await voteSuggestionInFirestore(sugId, targetSug.votes, targetSug.voters || []);
+      } catch (err) {
+        console.warn('Error syncing vote to Firestore:', err);
+      }
+    }
+  };
 
   // Merge base/local movies with Firestore cloud movies, excluding deleted items
   const allMovies = useMemo(() => {
@@ -851,6 +1005,31 @@ export default function App() {
               onEdit={handleOpenEdit}
               onDelete={handleDeleteMovie}
             />
+
+            {/* Teaser Banner to Sugerencias & Ruleta */}
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+              <div className="rounded-3xl bg-linear-to-r from-zinc-900 via-rose-950/40 to-zinc-900 border border-zinc-800/80 p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-xl">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center text-2xl shrink-0">
+                    💡
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-bold text-white">
+                      ¿No encuentras tu película o serie favorita?
+                    </h3>
+                    <p className="text-xs sm:text-sm text-zinc-400 mt-1">
+                      Pídela en nuestro Buzón de Sugerencias o gira la Ruleta Inteligente para descubrir qué ver hoy.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setActiveTab('sugerencias')}
+                  className="px-6 py-3 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-rose-950/40 transition-all active:scale-95 shrink-0"
+                >
+                  Ir a Sugerencias →
+                </button>
+              </div>
+            </div>
           </>
         ) : activeTab === 'peliculas' ? (
           /* TAB: CATÁLOGO COMPLETO DE PELÍCULAS */
@@ -1049,7 +1228,7 @@ export default function App() {
               </div>
             )}
           </div>
-        ) : (
+        ) : activeTab === 'historial' ? (
           /* TAB: CONTINUAR VIENDO / HISTORIAL */
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
             <div className="flex items-center justify-between mb-6">
@@ -1109,7 +1288,23 @@ export default function App() {
               </div>
             )}
           </div>
-        )}
+        ) : activeTab === 'sugerencias' ? (
+          /* TAB: SUGERENCIAS Y PETICIONES DE LA COMUNIDAD */
+          <SuggestionsSection
+            movies={allMovies}
+            suggestions={suggestions}
+            onAddSuggestion={handleAddSuggestion}
+            onVoteSuggestion={handleVoteSuggestion}
+            onDeleteSuggestion={handleDeleteSuggestion}
+            onUpdateStatus={handleUpdateSuggestionStatus}
+            onPlayMovie={(m) => {
+              setActivePlayerMovie(m);
+              setMiniPlayerMovie(null);
+            }}
+            onOpenDetail={(m) => setDetailModalMovie(m)}
+            userVotedIds={userVotedSuggestionIds}
+          />
+        ) : null}
       </main>
 
       {/* Footer */}

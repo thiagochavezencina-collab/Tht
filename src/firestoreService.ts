@@ -11,10 +11,11 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { Movie, UserReview } from './types';
+import { Movie, UserReview, MovieSuggestion } from './types';
 
 const CUSTOM_MOVIES_COLLECTION = 'custom_movies';
 const REVIEWS_COLLECTION = 'movie_reviews';
+const SUGGESTIONS_COLLECTION = 'movie_suggestions';
 
 /**
  * Recursively cleans an object for Firestore by removing any keys with `undefined` values.
@@ -274,6 +275,172 @@ export function subscribeToReviews(onUpdate: (reviewsByMovie: Record<string, Use
     );
   } catch (err) {
     console.warn('Failed to attach firestore listener for reviews:', err);
+    return () => {};
+  }
+}
+
+/**
+ * Save or update a community movie suggestion in Firestore.
+ */
+export async function saveSuggestionToFirestore(suggestion: MovieSuggestion): Promise<void> {
+  try {
+    const sugRef = doc(db, SUGGESTIONS_COLLECTION, suggestion.id);
+    const sanitized = sanitizeForFirestore({
+      ...suggestion,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    await setDoc(sugRef, sanitized, { merge: true });
+    console.log(`[Firestore] Suggestion "${suggestion.title}" successfully saved!`);
+  } catch (error) {
+    console.error('Error saving suggestion to Firestore:', error);
+    throw error;
+  }
+}
+
+/**
+ * Vote / Upvote a suggestion in Firestore.
+ */
+export async function voteSuggestionInFirestore(
+  suggestionId: string,
+  newVoteCount: number,
+  voters: string[]
+): Promise<void> {
+  try {
+    const sugRef = doc(db, SUGGESTIONS_COLLECTION, suggestionId);
+    await updateDoc(sugRef, {
+      votes: newVoteCount,
+      voters: voters,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    console.error('Error updating suggestion vote:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update a suggestion's status (pending, reviewing, accepted, available).
+ */
+export async function updateSuggestionStatusInFirestore(
+  suggestionId: string,
+  status: MovieSuggestion['status']
+): Promise<void> {
+  try {
+    const sugRef = doc(db, SUGGESTIONS_COLLECTION, suggestionId);
+    await updateDoc(sugRef, {
+      status,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    console.error('Error updating suggestion status:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete a suggestion from Firestore.
+ */
+export async function deleteSuggestionFromFirestore(suggestionId: string): Promise<void> {
+  try {
+    const sugRef = doc(db, SUGGESTIONS_COLLECTION, suggestionId);
+    await deleteDoc(sugRef);
+  } catch (error) {
+    console.error('Error deleting suggestion:', error);
+    throw error;
+  }
+}
+
+const MOCK_SUGGESTION_IDS = new Set(['sug-1', 'sug-2', 'sug-3', 'sug-4']);
+
+/**
+ * Automatically purge any legacy fake suggestions from Firestore.
+ */
+export async function purgeMockSuggestionsFromFirestore(): Promise<void> {
+  try {
+    for (const id of MOCK_SUGGESTION_IDS) {
+      const ref = doc(db, SUGGESTIONS_COLLECTION, id);
+      await deleteDoc(ref).catch(() => {});
+    }
+  } catch {}
+}
+
+/**
+ * Get all suggestions from Firestore (excluding any fake mock suggestions).
+ */
+export async function getSuggestionsFromFirestore(): Promise<MovieSuggestion[]> {
+  try {
+    const sugRef = collection(db, SUGGESTIONS_COLLECTION);
+    const q = query(sugRef, orderBy('votes', 'desc'));
+    const snapshot = await getDocs(q);
+    const results: MovieSuggestion[] = [];
+    snapshot.forEach((docSnap) => {
+      if (MOCK_SUGGESTION_IDS.has(docSnap.id)) return;
+      const data = docSnap.data();
+      results.push({
+        id: docSnap.id,
+        title: data.title || '',
+        contentType: data.contentType || 'movie',
+        genre: data.genre || '',
+        year: data.year,
+        reason: data.reason || '',
+        suggestedBy: data.suggestedBy || 'Anónimo',
+        senderDetails: data.senderDetails || undefined,
+        isAnonymous: data.isAnonymous !== false,
+        userAvatar: data.userAvatar || '🔒',
+        votes: typeof data.votes === 'number' ? data.votes : 1,
+        status: data.status || 'pending',
+        date: data.date || 'Reciente',
+        voters: Array.isArray(data.voters) ? data.voters : [],
+      });
+    });
+    return results;
+  } catch (error) {
+    console.warn('Error getting suggestions from Firestore:', error);
+    return [];
+  }
+}
+
+/**
+ * Real-time subscription to community suggestions (excluding fake mock ones).
+ */
+export function subscribeToSuggestions(onUpdate: (suggestions: MovieSuggestion[]) => void): () => void {
+  try {
+    const sugRef = collection(db, SUGGESTIONS_COLLECTION);
+    return onSnapshot(
+      sugRef,
+      (snapshot) => {
+        const results: MovieSuggestion[] = [];
+        snapshot.forEach((docSnap) => {
+          if (MOCK_SUGGESTION_IDS.has(docSnap.id)) return;
+          const data = docSnap.data();
+          results.push({
+            id: docSnap.id,
+            title: data.title || '',
+            contentType: data.contentType || 'movie',
+            genre: data.genre || '',
+            year: data.year,
+            reason: data.reason || '',
+            suggestedBy: data.suggestedBy || 'Anónimo',
+            senderDetails: data.senderDetails || undefined,
+            isAnonymous: data.isAnonymous !== false,
+            userAvatar: data.userAvatar || '🔒',
+            votes: typeof data.votes === 'number' ? data.votes : 1,
+            status: data.status || 'pending',
+            date: data.date || 'Reciente',
+            voters: Array.isArray(data.voters) ? data.voters : [],
+          });
+        });
+        // Sort by votes desc
+        results.sort((a, b) => b.votes - a.votes);
+        onUpdate(results);
+      },
+      (error) => {
+        console.warn('Firestore subscription notice (movie_suggestions):', error.message);
+      }
+    );
+  } catch (err) {
+    console.warn('Failed to attach firestore listener for suggestions:', err);
     return () => {};
   }
 }

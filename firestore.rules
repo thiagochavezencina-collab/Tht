@@ -10,5 +10,10 @@ service cloud.firestore {
     match /movie_reviews/{reviewId} {
       allow read, write: if true;
     }
+
+    // Community suggestions and movie requests
+    match /movie_suggestions/{suggestionId} {
+      allow read, write: if true;
+    }
   }
 }
