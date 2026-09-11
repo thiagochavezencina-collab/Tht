@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import Hls from 'hls.js';
 import {
   Play,
@@ -29,11 +29,18 @@ import {
   Check,
   Search,
   SlidersHorizontal,
+  ArrowLeft,
+  Crop,
+  Copy,
+  Info,
+  MonitorPlay,
 } from 'lucide-react';
-import { Movie, PlayerMode, Episode } from '../types';
+import { Movie, PlayerMode, Episode, SubtitleTrack } from '../types';
 import { parseVideoSource } from '../utils/videoHelper';
 import { saveVideoBlob, resolvePlayableVideoUrl } from '../utils/videoStorage';
 import { updateMovieInFirestore } from '../firestoreService';
+import { SubtitleModal, SubtitleConfig } from './SubtitleModal';
+import { useMobileControlLogic } from '../hooks/useMobileControlLogic';
 
 // Helper: Format seconds to MM:SS or HH:MM:SS
 function formatTime(seconds: number): string {
@@ -70,6 +77,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const progressTrackRef = useRef<HTMLDivElement>(null);
 
   // Determine episodes and current active episode
@@ -148,6 +156,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     parsedSource.type === 'dailymotion' ||
     parsedSource.type === 'embed';
   const isGoogleDrive = parsedSource.type === 'googledrive';
+  const isUsingEmbed = isEmbedSource;
 
   const [currentTime, setCurrentTime] = useState(initialTime);
   const [duration, setDuration] = useState(0);
@@ -157,10 +166,46 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [showSubtitlesMenu, setShowSubtitlesMenu] = useState(false);
   const [showMobileSettingsModal, setShowMobileSettingsModal] = useState(false);
-  const [selectedSubtitle, setSelectedSubtitle] = useState<string>('es');
+
+  // Dedicated Mobile Control Logic hook
+  const mobileLogic = useMobileControlLogic({
+    videoRef,
+    containerRef,
+    isUsingEmbed,
+    isPlaying,
+    isGoogleDrive,
+  });
+
+  const isMobilePortrait = mobileLogic.isMobilePortrait;
+
+  // Subtitles Management
+  const initialSubtitleTrackId = () => {
+    if (movie.subtitles && movie.subtitles.length > 0) {
+      return movie.subtitles[0].id || movie.subtitles[0].lang;
+    }
+    return 'off';
+  };
+
+  const [subtitleConfig, setSubtitleConfig] = useState<SubtitleConfig>({
+    trackId: initialSubtitleTrackId(),
+    offsetSeconds: 0,
+    fontSize: 'lg',
+    textColor: 'white',
+    backgroundStyle: 'solid',
+  });
+  const [customTracks, setCustomTracks] = useState<SubtitleTrack[]>([]);
+  const [isSubtitleModalOpen, setIsSubtitleModalOpen] = useState(false);
+
+  const availableTracks = useMemo<SubtitleTrack[]>(() => {
+    const movieTracks = movie.subtitles || [];
+    const episodeTracks = activeEpisode?.subtitles || [];
+    return [...movieTracks, ...episodeTracks, ...customTracks];
+  }, [movie.subtitles, activeEpisode, customTracks]);
+
   const [currentSubtitleText, setCurrentSubtitleText] = useState<string>('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isTheaterMode, setIsTheaterMode] = useState(false);
+
   const [areControlsVisible, setAreControlsVisible] = useState(true);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverPosition, setHoverPosition] = useState<number>(0);
@@ -340,12 +385,15 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     setCurrentTime(current);
     onProgressUpdate(movie.id, current, videoRef.current.duration || 0);
 
-    // Update Subtitles based on current time
-    if (selectedSubtitle !== 'off' && movie.subtitles) {
-      const activeSubTrack = movie.subtitles.find((s) => s.lang === selectedSubtitle);
-      if (activeSubTrack && activeSubTrack.cues) {
+    // Update Subtitles based on current time + offset
+    if (subtitleConfig.trackId !== 'off') {
+      const activeSubTrack = availableTracks.find(
+        (s) => s.id === subtitleConfig.trackId || s.lang === subtitleConfig.trackId
+      );
+      if (activeSubTrack && activeSubTrack.cues && activeSubTrack.cues.length > 0) {
+        const adjustedTime = current + (subtitleConfig.offsetSeconds || 0);
         const matchingCue = activeSubTrack.cues.find(
-          (cue) => current >= cue.start && current <= cue.end
+          (cue) => adjustedTime >= cue.start && adjustedTime <= cue.end
         );
         setCurrentSubtitleText(matchingCue ? matchingCue.text : '');
       } else {
@@ -470,6 +518,24 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   };
 
   const toggleFullscreen = () => {
+    // 1. On iOS Safari (iPhone), HTML5 video elements have webkitEnterFullscreen which gives true native fullscreen
+    const video = videoRef.current as any;
+    if (video && typeof video.webkitEnterFullscreen === 'function' && !isUsingEmbed) {
+      try {
+        video.webkitEnterFullscreen();
+        return;
+      } catch {
+        // Fallback to container fullscreen
+      }
+    }
+
+    // 2. For embeds (like Google Drive) on mobile or browsers that block iframe fullscreen
+    if (isUsingEmbed) {
+      mobileLogic.toggleEmbedFullscreen();
+      setIsFullscreen((prev) => !prev);
+      return;
+    }
+
     if (!containerRef.current) return;
     const elem = containerRef.current as any;
     const doc = document as any;
@@ -483,13 +549,17 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
     if (!isCurrentFs) {
       if (elem.requestFullscreen) {
-        elem.requestFullscreen().catch(() => {});
+        elem.requestFullscreen().catch(() => {
+          setIsFullscreen(true);
+        });
       } else if (elem.webkitRequestFullscreen) {
         elem.webkitRequestFullscreen();
       } else if (elem.mozRequestFullScreen) {
         elem.mozRequestFullScreen();
       } else if (elem.msRequestFullscreen) {
         elem.msRequestFullscreen();
+      } else {
+        setIsFullscreen(true);
       }
       setIsFullscreen(true);
       try {
@@ -518,6 +588,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         // Ignore
       }
     }
+  };
+
+  const handleToggleCinemaMode = () => {
+    toggleFullscreen();
   };
 
   // Fullscreen change listener to keep isFullscreen state synchronized
@@ -702,7 +776,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   };
 
   const progressPercent = duration ? (currentTime / duration) * 100 : 0;
-  const isUsingEmbed = isEmbedSource;
 
   return (
     <div
@@ -710,8 +783,13 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       onMouseMove={showControlsTemporarily}
       onTouchStart={handleGlobalTouchStart}
       onTouchEnd={handleGlobalTouchEnd}
-      className={`fixed inset-0 z-50 bg-black flex items-center justify-center transition-all duration-300 select-none overflow-hidden h-[100dvh] max-h-[100dvh] w-full max-w-full ${
-        isTheaterMode ? 'p-0' : 'p-0 sm:p-4 md:p-8 bg-zinc-950/95 backdrop-blur-xl'
+      className={`fixed inset-0 z-50 bg-black flex transition-all duration-300 select-none overflow-hidden h-[100dvh] max-h-[100dvh] w-full max-w-full ${
+        isMobilePortrait && !isFullscreen && !mobileLogic.isEmbedExpandedFullscreen
+          ? 'flex-col justify-start overflow-y-auto bg-zinc-950 text-white p-0'
+          : 'items-center justify-center ' +
+            (isTheaterMode || isFullscreen || mobileLogic.isEmbedExpandedFullscreen
+              ? 'p-0'
+              : 'p-0 sm:p-4 md:p-8 bg-zinc-950/95 backdrop-blur-xl')
       }`}
       style={{ height: '100dvh', maxHeight: '100dvh' }}
     >
@@ -728,18 +806,23 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       {/* Main Video Wrapper */}
       <div
         className={`relative w-full overflow-hidden bg-black shadow-2xl transition-all duration-300 ${
-          isTheaterMode || isFullscreen || isUsingEmbed
+          isMobilePortrait && !isFullscreen && !mobileLogic.isEmbedExpandedFullscreen
+            ? 'aspect-video sticky top-0 z-40 shrink-0 border-b border-zinc-800/80 shadow-2xl'
+            : isTheaterMode || isFullscreen || mobileLogic.isEmbedExpandedFullscreen
             ? 'h-full w-full rounded-none'
-            : 'h-full sm:h-auto max-w-6xl aspect-auto sm:aspect-video sm:max-h-[85vh] rounded-none sm:rounded-2xl border-0 sm:border border-zinc-800/80 shadow-rose-950/20'
+            : 'h-full sm:h-auto max-w-6xl aspect-video sm:max-h-[85vh] rounded-none sm:rounded-2xl border-0 sm:border border-zinc-800/80 shadow-rose-950/20'
         }`}
       >
         {/* RENDER CASE 1: External Platform Embed (YouTube, Vimeo, Google Drive, Dailymotion) */}
         {isUsingEmbed ? (
           <div className="w-full h-full bg-black relative flex items-center justify-center">
             <iframe
+              ref={iframeRef}
               src={parsedSource.embedUrl || playableVideoUrl}
               title={activeDisplayTitle}
-              className="w-full h-full border-0 bg-black"
+              className={`w-full h-full border-0 bg-black ${
+                mobileLogic.embedFitMode === 'cover' ? 'scale-105 object-cover' : 'object-contain'
+              }`}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
               allowFullScreen
               // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -749,6 +832,100 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               // @ts-ignore
               mozallowfullscreen="true"
             />
+            {/* Dedicated Clean Embed Overlay Header (Safe-area compliant, high contrast, non-overlapping) */}
+            <div
+              className="absolute inset-x-0 top-0 z-30 flex items-center justify-between pointer-events-none p-2 sm:p-3"
+              style={{
+                paddingTop: 'max(0.75rem, env(safe-area-inset-top, 0.75rem))',
+                paddingLeft: 'max(0.75rem, env(safe-area-inset-left, 0.75rem))',
+                paddingRight: 'max(0.75rem, env(safe-area-inset-right, 0.75rem))',
+              }}
+            >
+              <button
+                onClick={onClose}
+                className="pointer-events-auto flex items-center gap-1.5 px-3 py-2 rounded-full bg-black/85 hover:bg-black text-white backdrop-blur-md border border-white/20 shadow-2xl active:scale-95 text-xs font-semibold cursor-pointer min-h-[40px]"
+                title="Volver"
+                aria-label="Volver"
+              >
+                <ArrowLeft className="w-4 h-4 text-rose-400" />
+                <span className="hidden xs:inline">Volver</span>
+              </button>
+
+              <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2">
+                {isGoogleDrive && (
+                  <>
+                    <button
+                      onClick={() => mobileLogic.toggleEmbedFitMode()}
+                      className="hidden sm:flex items-center gap-1 px-3 py-2 rounded-full bg-zinc-900/90 hover:bg-zinc-800 text-zinc-200 text-xs font-semibold backdrop-blur-md border border-zinc-700/60 shadow-xl active:scale-95 cursor-pointer min-h-[40px]"
+                      title={mobileLogic.embedFitMode === 'cover' ? 'Modo normal (16:9)' : 'Llenar pantalla'}
+                    >
+                      <Crop className="w-3.5 h-3.5 text-zinc-400" />
+                      <span>{mobileLogic.embedFitMode === 'cover' ? 'Ajustar' : 'Llenar'}</span>
+                    </button>
+
+                    <a
+                      href={parsedSource.directUrl || parsedSource.embedUrl || activeVideoUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs backdrop-blur-md shadow-2xl active:scale-95 cursor-pointer min-h-[40px] border border-amber-300/50"
+                      title="Abrir en Google Drive (Reproductor nativo de iOS con AirPlay y rotación)"
+                    >
+                      <ExternalLink className="w-4 h-4 text-black" />
+                      <span>Abrir en Drive</span>
+                    </a>
+                  </>
+                )}
+
+                {/* Primary Fullscreen button */}
+                <button
+                  onClick={toggleFullscreen}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs backdrop-blur-md shadow-2xl active:scale-95 border border-rose-400/40 cursor-pointer min-h-[40px]"
+                  title={isFullscreen || mobileLogic.isEmbedExpandedFullscreen ? 'Salir de Pantalla Completa' : 'Pantalla Completa'}
+                  aria-label="Pantalla completa"
+                >
+                  {isFullscreen || mobileLogic.isEmbedExpandedFullscreen ? (
+                    <>
+                      <Minimize className="w-4 h-4" />
+                      <span className="hidden xs:inline">Salir</span>
+                    </>
+                  ) : (
+                    <>
+                      <Maximize className="w-4 h-4" />
+                      <span>Pantalla Completa</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={onClose}
+                  className="p-2 rounded-full bg-black/85 hover:bg-rose-600 text-white backdrop-blur-md border border-white/20 shadow-2xl active:scale-95 flex items-center justify-center cursor-pointer min-w-[40px] min-h-[40px]"
+                  title="Cerrar reproductor"
+                  aria-label="Cerrar"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Google Drive Mobile Helper Banner */}
+            {isGoogleDrive && isMobilePortrait && !isFullscreen && !mobileLogic.isEmbedExpandedFullscreen && (
+              <div
+                className="absolute bottom-2 inset-x-2 z-20 pointer-events-auto bg-zinc-950/95 backdrop-blur-md border border-amber-500/40 rounded-xl p-2 px-3 flex items-center justify-between text-[11px] text-zinc-200 shadow-2xl"
+              >
+                <div className="flex items-center gap-2 truncate pr-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0 animate-pulse" />
+                  <span className="truncate">
+                    ¿No ves el botón en Drive? Usa <b>Pantalla Completa</b> arriba o <b>Abrir en Drive</b>.
+                  </span>
+                </div>
+                <button
+                  onClick={toggleFullscreen}
+                  className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] shrink-0 active:scale-95 cursor-pointer"
+                >
+                  Maximizar
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           /* RENDER CASE 2: Native HTML5 Video Element with Full Controls & Minute Bar */
@@ -765,7 +942,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                       ? undefined
                       : playableVideoUrl
                   }
-                  className="w-full h-full object-contain pointer-events-none"
+                  className={`w-full h-full object-contain ${
+                    mobileLogic.useNativeControls ? 'pointer-events-auto' : 'pointer-events-none'
+                  }`}
+                  controls={mobileLogic.useNativeControls}
                   playsInline
                   preload="auto"
                   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -773,6 +953,12 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   webkit-playsinline="true"
                   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                   // @ts-ignore
+                  x5-playsinline="true"
+                  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                  // @ts-ignore
+                  controlsList="nodownload nofullscreen noremoteplayback"
+                  disablePictureInPicture
+                  disableRemotePlayback
                   referrerPolicy="no-referrer"
                   onTimeUpdate={handleTimeUpdate}
                   onLoadedMetadata={handleLoadedMetadata}
@@ -794,13 +980,13 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 />
 
                 {/* Double-Tap 10s Feedback Animation Ripples for Mobile */}
-                {doubleTapFeedback?.side === 'left' && (
+                {!mobileLogic.shouldHideCustomOverlay && doubleTapFeedback?.side === 'left' && (
                   <div className="absolute left-6 sm:left-12 top-1/2 -translate-y-1/2 z-25 bg-black/70 backdrop-blur-md px-4 py-3 rounded-full flex items-center gap-2 text-white font-bold text-sm border border-rose-500/30 animate-pulse pointer-events-none shadow-2xl">
                     <RotateCcw className="w-5 h-5 text-rose-400" />
                     <span>-10s</span>
                   </div>
                 )}
-                {doubleTapFeedback?.side === 'right' && (
+                {!mobileLogic.shouldHideCustomOverlay && doubleTapFeedback?.side === 'right' && (
                   <div className="absolute right-6 sm:right-12 top-1/2 -translate-y-1/2 z-25 bg-black/70 backdrop-blur-md px-4 py-3 rounded-full flex items-center gap-2 text-white font-bold text-sm border border-rose-500/30 animate-pulse pointer-events-none shadow-2xl">
                     <span>+10s</span>
                     <RotateCw className="w-5 h-5 text-rose-400" />
@@ -820,19 +1006,53 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   </div>
                 )}
 
-                {/* Central Play Button (Essential for mobile browsers that require user gesture) */}
-                {!isPlaying && !isBuffering && !hasEnded && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      togglePlay();
-                    }}
-                    className="absolute inset-0 m-auto w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-rose-600/90 hover:bg-rose-500 text-white flex items-center justify-center shadow-2xl hover:scale-110 active:scale-95 transition-all z-20 cursor-pointer backdrop-blur-sm border border-rose-400/30 ring-4 ring-rose-500/20"
-                    aria-label="Reproducir video"
+                {/* Unified Central Playback Controls Cluster (Single Source of Truth on Mobile) */}
+                {!mobileLogic.shouldHideCustomOverlay && (!isPlaying || areControlsVisible) && !isBuffering && !hasEnded && (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className={`absolute inset-0 m-auto flex items-center justify-center gap-5 sm:gap-8 pointer-events-auto z-20 transition-all duration-200 ${
+                      !isPlaying || areControlsVisible
+                        ? 'opacity-100 scale-100'
+                        : 'opacity-0 scale-95 pointer-events-none'
+                    }`}
                   >
-                    <Play className="w-8 h-8 sm:w-9 sm:h-9 fill-white translate-x-0.5" />
-                  </button>
+                    {/* -10s quick button (clean mobile tap target) */}
+                    <button
+                      type="button"
+                      onClick={() => handleSkip(-10)}
+                      className="p-3 sm:p-3.5 rounded-full bg-black/60 hover:bg-black/80 text-white backdrop-blur-md border border-white/20 shadow-xl active:scale-90 transition-transform cursor-pointer"
+                      title="Retroceder 10s"
+                      aria-label="Retroceder 10 segundos"
+                    >
+                      <RotateCcw className="w-5 h-5 sm:w-6 sm:h-6 text-zinc-100" />
+                    </button>
+
+                    {/* Prominent Center Play / Pause Button */}
+                    <button
+                      type="button"
+                      onClick={togglePlay}
+                      className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-rose-600/95 hover:bg-rose-500 text-white flex items-center justify-center shadow-2xl hover:scale-105 active:scale-90 transition-all cursor-pointer backdrop-blur-md border border-rose-400/40 ring-4 ring-rose-500/25"
+                      aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
+                      title={isPlaying ? 'Pausar' : 'Reproducir'}
+                    >
+                      {isPlaying ? (
+                        <Pause className="w-8 h-8 sm:w-9 sm:h-9 fill-white" />
+                      ) : (
+                        <Play className="w-8 h-8 sm:w-9 sm:h-9 fill-white translate-x-0.5" />
+                      )}
+                    </button>
+
+                    {/* +10s quick button (clean mobile tap target) */}
+                    <button
+                      type="button"
+                      onClick={() => handleSkip(10)}
+                      className="p-3 sm:p-3.5 rounded-full bg-black/60 hover:bg-black/80 text-white backdrop-blur-md border border-white/20 shadow-xl active:scale-90 transition-transform cursor-pointer"
+                      title="Adelantar 10s"
+                      aria-label="Adelantar 10 segundos"
+                    >
+                      <RotateCw className="w-5 h-5 sm:w-6 sm:h-6 text-zinc-100" />
+                    </button>
+                  </div>
                 )}
               </>
             )}
@@ -1051,8 +1271,26 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
             {/* Subtitles Overlay */}
             {currentSubtitleText && !hasVideoError && (
-              <div className="absolute bottom-20 left-0 right-0 px-6 text-center pointer-events-none z-20">
-                <span className="inline-block bg-black/80 text-white font-medium text-base sm:text-lg md:text-xl px-4 py-1.5 rounded-lg border border-white/10 shadow-lg tracking-wide backdrop-blur-sm">
+              <div className="absolute bottom-16 sm:bottom-20 left-0 right-0 px-4 sm:px-6 text-center pointer-events-none z-20 select-none">
+                <span
+                  className={`inline-block transition-all ${
+                    subtitleConfig.fontSize === 'sm'
+                      ? 'text-xs sm:text-sm'
+                      : subtitleConfig.fontSize === 'base'
+                      ? 'text-sm sm:text-base'
+                      : subtitleConfig.fontSize === 'lg'
+                      ? 'text-base sm:text-lg md:text-xl'
+                      : 'text-lg sm:text-xl md:text-2xl font-bold'
+                  } ${
+                    subtitleConfig.textColor === 'yellow' ? 'text-yellow-300' : 'text-white'
+                  } ${
+                    subtitleConfig.backgroundStyle === 'solid'
+                      ? 'bg-black/85 px-4 py-1.5 rounded-lg border border-white/10 shadow-lg tracking-wide backdrop-blur-sm'
+                      : subtitleConfig.backgroundStyle === 'translucent'
+                      ? 'bg-black/45 backdrop-blur-md px-4 py-1.5 rounded-lg shadow-md tracking-wide'
+                      : 'drop-shadow-[0_2px_4px_rgba(0,0,0,1)] tracking-wide font-semibold'
+                  }`}
+                >
                   {currentSubtitleText}
                 </span>
               </div>
@@ -1068,168 +1306,151 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           </div>
         )}
 
-        {/* Top Control Bar */}
-        <div
-          className={`absolute top-0 inset-x-0 p-2.5 sm:p-4 bg-gradient-to-b from-black/95 via-black/60 to-transparent flex items-center justify-between z-30 transition-opacity duration-300 ${
-            areControlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
-          }`}
-          style={{
-            paddingTop: 'max(0.75rem, env(safe-area-inset-top, 0px))',
-            paddingLeft: 'max(0.75rem, env(safe-area-inset-left, 0px))',
-            paddingRight: 'max(0.75rem, env(safe-area-inset-right, 0px))',
-          }}
-        >
-          {/* Mobile pull-down hint */}
-          <div className="sm:hidden absolute top-1 inset-x-0 flex justify-center pointer-events-none">
-            <div className="w-10 h-1 rounded-full bg-white/25" />
-          </div>
-          <div className="flex items-center gap-2 sm:gap-3 truncate max-w-[48%] sm:max-w-[65%]">
-            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-              <span className="px-1.5 sm:px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-bold bg-rose-600 text-white tracking-wider">
-                {movie.contentType === 'series' ? 'SERIE' : movie.quality}
-              </span>
-              {isGoogleDrive ? (
-                <span className="px-1.5 sm:px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                  Drive
-                </span>
-              ) : (
-                <span className="hidden xs:inline px-1.5 py-0.5 rounded text-[10px] sm:text-[11px] font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700">
-                  {movie.ageRating}
-                </span>
-              )}
+        {/* Top Control Bar (Native Video Player only) */}
+        {!isUsingEmbed && !mobileLogic.shouldHideCustomOverlay && (
+          <div
+            className={`absolute top-0 inset-x-0 p-2.5 sm:p-4 bg-gradient-to-b from-black/95 via-black/60 to-transparent flex items-center justify-between z-30 transition-opacity duration-300 ${
+              areControlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            }`}
+            style={{
+              paddingTop: 'max(0.75rem, env(safe-area-inset-top, 0px))',
+              paddingLeft: 'max(0.75rem, env(safe-area-inset-left, 0px))',
+              paddingRight: 'max(0.75rem, env(safe-area-inset-right, 0px))',
+            }}
+          >
+            {/* Mobile pull-down hint */}
+            <div className="sm:hidden absolute top-1 inset-x-0 flex justify-center pointer-events-none">
+              <div className="w-10 h-1 rounded-full bg-white/25" />
             </div>
-            <h2 className="text-white font-semibold text-xs sm:text-base md:text-lg truncate drop-shadow-md">
-              {activeDisplayTitle}
-            </h2>
-          </div>
-
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Series Episodes Drawer Toggle */}
-            {hasEpisodes && (
-              <button
-                onClick={() => setShowEpisodesDrawer(!showEpisodesDrawer)}
-                className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors min-h-[38px] ${
-                  showEpisodesDrawer
-                    ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/50'
-                    : 'bg-zinc-900/80 hover:bg-zinc-800 text-zinc-200 border border-zinc-700'
-                }`}
-                title="Lista de episodios"
-              >
-                <ListVideo className="w-4 h-4 text-rose-400" />
-                <span className="hidden sm:inline">Episodios ({episodesList.length})</span>
-                <span className="sm:hidden text-[11px] font-bold">Eps</span>
-              </button>
-            )}
-
-            {/* Quick Settings on mobile */}
-            <button
-              onClick={() => setShowMobileSettingsModal(true)}
-              className="flex sm:hidden p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] items-center justify-center border border-zinc-700/60"
-              title="Ajustes y opciones de reproducción"
-            >
-              <SlidersHorizontal className="w-4 h-4" />
-            </button>
-
-            {/* Source switcher button (Desktop) */}
-            <button
-              onClick={() => setShowSourceModal(true)}
-              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors text-xs border border-zinc-700/60"
-              title="Cambiar fuente de video o archivo local"
-            >
-              <Upload className="w-3.5 h-3.5 text-rose-400" />
-              <span>Fuente de Video</span>
-            </button>
-
-            {/* External link button (Direct Fullscreen / Google Drive) */}
-            <a
-              href={parsedSource.embedUrl || activeVideoUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="flex p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] items-center justify-center border border-zinc-700/40"
-              title={isGoogleDrive ? 'Abrir en Google Drive directamente' : 'Abrir fuente de video en nueva pestaña'}
-            >
-              <ExternalLink className="w-4 h-4 text-amber-400" />
-            </a>
-
-            {/* Top Bar Fullscreen Button (Crucial for mobile and Google Drive) */}
-            <button
-              onClick={toggleFullscreen}
-              className="p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] flex items-center justify-center border border-zinc-700/40 cursor-pointer"
-              title={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
-              aria-label="Pantalla completa"
-            >
-              {isFullscreen ? (
-                <Minimize className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400" />
-              ) : (
-                <Maximize className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400" />
+            <div className="flex items-center gap-2 sm:gap-3 truncate max-w-[55%] sm:max-w-[65%]">
+              {(isFullscreen || isMobilePortrait) && (
+                <button
+                  onClick={() => {
+                    if (isFullscreen) {
+                      toggleFullscreen();
+                    } else {
+                      onClose();
+                    }
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 text-zinc-200 border border-zinc-700/80 text-xs font-semibold shrink-0 cursor-pointer active:scale-95 transition-transform"
+                  title={isFullscreen ? 'Salir de pantalla completa' : 'Volver'}
+                >
+                  <ArrowLeft className="w-3.5 h-3.5 text-rose-400" />
+                  <span className="hidden xs:inline">
+                    {isFullscreen ? 'Salir' : 'Volver'}
+                  </span>
+                </button>
               )}
-            </button>
+              <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+                <span className="px-1.5 sm:px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-bold bg-rose-600 text-white tracking-wider">
+                  {movie.contentType === 'series' ? 'SERIE' : movie.quality}
+                </span>
+                {isGoogleDrive ? (
+                  <span className="px-1.5 sm:px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                    Drive
+                  </span>
+                ) : (
+                  <span className="hidden xs:inline px-1.5 py-0.5 rounded text-[10px] sm:text-[11px] font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700">
+                    {movie.ageRating}
+                  </span>
+                )}
+              </div>
+              <h2 className="text-white font-semibold text-xs sm:text-base md:text-lg truncate drop-shadow-md">
+                {activeDisplayTitle}
+              </h2>
+            </div>
 
-            {/* PiP Button (for native videos) */}
-            {!isUsingEmbed && (
-              <button
-                onClick={handlePiP}
-                className="hidden sm:flex p-2 rounded-xl bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors"
-                title="Ventana flotante (Picture-in-Picture)"
-              >
-                <Tv className="w-4 h-4" />
-              </button>
-            )}
-
-            {/* In-app Mini Player */}
-            <button
-              onClick={onMinimize}
-              className="p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] flex items-center justify-center border border-zinc-700/40"
-              title="Minimizar reproductor y seguir navegando"
-            >
-              <Minimize2 className="w-4 h-4" />
-            </button>
-
-            {/* Close Button */}
-            <button
-              onClick={onClose}
-              className="p-2 rounded-xl bg-zinc-900/80 hover:bg-rose-600 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] flex items-center justify-center border border-zinc-700/40"
-              title="Cerrar reproductor"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Floating Quick Action Pill for Embeds / Google Drive when Top Bar auto-hides */}
-        {isUsingEmbed && !areControlsVisible && (
-          <div className="absolute top-2.5 right-2.5 sm:top-3 sm:right-3 z-30 flex items-center gap-1.5 animate-fade-in pointer-events-auto">
-            <button
-              onClick={() => {
-                setAreControlsVisible(true);
-                showControlsTemporarily();
-              }}
-              className="px-2.5 py-1.5 rounded-full bg-black/75 hover:bg-black/95 text-white/90 text-xs font-semibold backdrop-blur-md border border-white/20 transition-all shadow-xl active:scale-95 flex items-center gap-1 cursor-pointer"
-              title="Mostrar menú CineStream"
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5 text-rose-400" />
-              <span className="hidden xs:inline">Menú</span>
-            </button>
-            <button
-              onClick={toggleFullscreen}
-              className="p-2 rounded-full bg-black/75 hover:bg-black/95 text-white/90 backdrop-blur-md border border-white/20 transition-all shadow-xl active:scale-95 cursor-pointer"
-              title={isFullscreen ? 'Salir de Pantalla Completa' : 'Pantalla Completa'}
-              aria-label="Pantalla completa"
-            >
-              {isFullscreen ? (
-                <Minimize className="w-3.5 h-3.5 text-rose-400" />
-              ) : (
-                <Maximize className="w-3.5 h-3.5 text-rose-400" />
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              {/* Series Episodes Drawer Toggle */}
+              {hasEpisodes && (
+                <button
+                  onClick={() => setShowEpisodesDrawer(!showEpisodesDrawer)}
+                  className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors min-h-[38px] ${
+                    showEpisodesDrawer
+                      ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/50'
+                      : 'bg-zinc-900/80 hover:bg-zinc-800 text-zinc-200 border border-zinc-700'
+                  }`}
+                  title="Lista de episodios"
+                >
+                  <ListVideo className="w-4 h-4 text-rose-400" />
+                  <span className="hidden sm:inline">Episodios ({episodesList.length})</span>
+                  <span className="sm:hidden text-[11px] font-bold">Eps</span>
+                </button>
               )}
-            </button>
-            <button
-              onClick={onClose}
-              className="p-2 rounded-full bg-black/75 hover:bg-rose-600 text-white/90 backdrop-blur-md border border-white/20 transition-all shadow-xl active:scale-95 cursor-pointer"
-              title="Cerrar reproductor"
-              aria-label="Cerrar"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
+
+              {/* Quick Settings on mobile */}
+              <button
+                onClick={() => setShowMobileSettingsModal(true)}
+                className="flex sm:hidden p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] items-center justify-center border border-zinc-700/60"
+                title="Ajustes y opciones de reproducción"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+              </button>
+
+              {/* Source switcher button (Desktop) */}
+              <button
+                onClick={() => setShowSourceModal(true)}
+                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors text-xs border border-zinc-700/60"
+                title="Cambiar fuente de video o archivo local"
+              >
+                <Upload className="w-3.5 h-3.5 text-rose-400" />
+                <span>Fuente de Video</span>
+              </button>
+
+              {/* External link button (Direct Fullscreen / Google Drive) */}
+              <a
+                href={parsedSource.embedUrl || activeVideoUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] items-center justify-center border border-zinc-700/40"
+                title={isGoogleDrive ? 'Abrir en Google Drive directamente' : 'Abrir fuente de video en nueva pestaña'}
+              >
+                <ExternalLink className="w-4 h-4 text-amber-400" />
+              </a>
+
+              {/* Top Bar Fullscreen Button (Crucial for mobile and Google Drive) */}
+              <button
+                onClick={toggleFullscreen}
+                className="p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] flex items-center justify-center border border-zinc-700/40 cursor-pointer"
+                title={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+                aria-label="Pantalla completa"
+              >
+                {isFullscreen ? (
+                  <Minimize className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400" />
+                ) : (
+                  <Maximize className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400" />
+                )}
+              </button>
+
+              {/* PiP Button (for native videos) */}
+              {!isUsingEmbed && (
+                <button
+                  onClick={handlePiP}
+                  className="hidden sm:flex p-2 rounded-xl bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors"
+                  title="Ventana flotante (Picture-in-Picture)"
+                >
+                  <Tv className="w-4 h-4" />
+                </button>
+              )}
+
+              {/* In-app Mini Player */}
+              <button
+                onClick={onMinimize}
+                className="p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] flex items-center justify-center border border-zinc-700/40"
+                title="Minimizar reproductor y seguir navegando"
+              >
+                <Minimize2 className="w-4 h-4" />
+              </button>
+
+              {/* Close Button */}
+              <button
+                onClick={onClose}
+                className="p-2 rounded-xl bg-zinc-900/80 hover:bg-rose-600 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] flex items-center justify-center border border-zinc-700/40"
+                title="Cerrar reproductor"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -1388,7 +1609,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         )}
 
         {/* Bottom Video Controls for Native Video Player */}
-        {!isUsingEmbed && !hasVideoError && (
+        {!isUsingEmbed && !hasVideoError && !mobileLogic.shouldHideCustomOverlay && (
           <div
             className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent px-3 sm:px-4 py-2.5 sm:py-4 z-30 transition-opacity duration-300 ${
               areControlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
@@ -1436,10 +1657,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             <div className="flex items-center justify-between gap-1.5 sm:gap-2">
               {/* Left Controls: Play, Next Ep, Skips, Time, Volume */}
               <div className="flex items-center gap-1 sm:gap-2.5 min-w-0">
-                {/* Play / Pause */}
+                {/* Play / Pause - Desktop only (mobile uses the unified central controller to prevent duplicate buttons) */}
                 <button
                   onClick={togglePlay}
-                  className="p-2 sm:p-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors shrink-0 min-w-[38px] min-h-[38px] flex items-center justify-center"
+                  className="hidden sm:flex p-2 sm:p-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors shrink-0 min-w-[38px] min-h-[38px] items-center justify-center cursor-pointer"
                   title={isPlaying ? 'Pausar (Espacio)' : 'Reproducir (Espacio)'}
                 >
                   {isPlaying ? (
@@ -1453,26 +1674,26 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 {hasNextEpisode && (
                   <button
                     onClick={handleNextEpisode}
-                    className="p-1.5 sm:p-2 text-rose-400 hover:text-rose-300 transition-colors shrink-0"
+                    className="p-1.5 sm:p-2 text-rose-400 hover:text-rose-300 transition-colors shrink-0 cursor-pointer"
                     title="Siguiente Episodio"
                   >
                     <SkipForward className="w-4 h-4 sm:w-5 sm:h-5 fill-rose-400" />
                   </button>
                 )}
 
-                {/* 10s Backward */}
+                {/* 10s Backward - Desktop only (mobile uses the central controller or double tap) */}
                 <button
                   onClick={() => handleSkip(-10)}
-                  className="p-1.5 sm:p-2 text-zinc-300 hover:text-white transition-colors shrink-0"
+                  className="hidden sm:flex p-1.5 sm:p-2 text-zinc-300 hover:text-white transition-colors shrink-0 cursor-pointer"
                   title="Retroceder 10 segundos"
                 >
                   <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
 
-                {/* 10s Forward */}
+                {/* 10s Forward - Desktop only */}
                 <button
                   onClick={() => handleSkip(10)}
-                  className="p-1.5 sm:p-2 text-zinc-300 hover:text-white transition-colors shrink-0"
+                  className="hidden sm:flex p-1.5 sm:p-2 text-zinc-300 hover:text-white transition-colors shrink-0 cursor-pointer"
                   title="Adelantar 10 segundos"
                 >
                   <RotateCw className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -1560,63 +1781,69 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                       setShowSubtitlesMenu(!showSubtitlesMenu);
                       setShowSpeedMenu(false);
                     }}
-                    className={`px-2 py-1.5 sm:p-2 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors min-h-[36px] ${
-                      selectedSubtitle !== 'off'
+                    className={`px-2 py-1.5 sm:p-2 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors min-h-[36px] cursor-pointer ${
+                      subtitleConfig.trackId !== 'off'
                         ? 'bg-rose-600/30 text-rose-300 border border-rose-500/40'
                         : 'bg-zinc-900/80 sm:bg-transparent text-zinc-300 hover:text-white hover:bg-zinc-800'
                     }`}
-                    title="Subtítulos"
+                    title="Subtítulos & Pistas"
                   >
                     <Subtitles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-400" />
                     <span className="text-[10px] font-bold uppercase sm:hidden">
-                      {selectedSubtitle === 'off' ? 'CC' : selectedSubtitle}
+                      {subtitleConfig.trackId === 'off' ? 'CC' : 'SUB'}
                     </span>
                   </button>
 
                   {showSubtitlesMenu && (
-                    <div className="absolute bottom-12 right-0 bg-zinc-900/98 backdrop-blur-xl border border-zinc-800 rounded-xl p-1.5 shadow-2xl z-50 w-40 max-w-[calc(100vw-1rem)]">
-                      <span className="text-[10px] uppercase font-bold text-zinc-500 px-2 py-1 block">
+                    <div className="absolute bottom-12 right-0 bg-zinc-900/98 backdrop-blur-xl border border-zinc-800 rounded-xl p-1.5 shadow-2xl z-50 w-52 max-w-[calc(100vw-1rem)] animate-fade-in">
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 px-2 py-1 block">
                         Subtítulos
                       </span>
                       <button
                         onClick={() => {
-                          setSelectedSubtitle('off');
+                          setSubtitleConfig({ ...subtitleConfig, trackId: 'off' });
                           setShowSubtitlesMenu(false);
                         }}
-                        className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors ${
-                          selectedSubtitle === 'off'
+                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center justify-between cursor-pointer ${
+                          subtitleConfig.trackId === 'off'
                             ? 'bg-rose-600 text-white font-bold'
                             : 'text-zinc-300 hover:bg-zinc-800'
                         }`}
                       >
-                        Desactivados
+                        <span>Desactivados</span>
+                        {subtitleConfig.trackId === 'off' && <Check className="w-3.5 h-3.5" />}
                       </button>
-                      <button
-                        onClick={() => {
-                          setSelectedSubtitle('es');
-                          setShowSubtitlesMenu(false);
-                        }}
-                        className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors ${
-                          selectedSubtitle === 'es'
-                            ? 'bg-rose-600 text-white font-bold'
-                            : 'text-zinc-300 hover:bg-zinc-800'
-                        }`}
-                      >
-                        Español
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSelectedSubtitle('en');
-                          setShowSubtitlesMenu(false);
-                        }}
-                        className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors ${
-                          selectedSubtitle === 'en'
-                            ? 'bg-rose-600 text-white font-bold'
-                            : 'text-zinc-300 hover:bg-zinc-800'
-                        }`}
-                      >
-                        English
-                      </button>
+
+                      {availableTracks.map((tr) => (
+                        <button
+                          key={tr.id}
+                          onClick={() => {
+                            setSubtitleConfig({ ...subtitleConfig, trackId: tr.id });
+                            setShowSubtitlesMenu(false);
+                          }}
+                          className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center justify-between truncate cursor-pointer ${
+                            subtitleConfig.trackId === tr.id || subtitleConfig.trackId === tr.lang
+                              ? 'bg-rose-600 text-white font-bold'
+                              : 'text-zinc-300 hover:bg-zinc-800'
+                          }`}
+                        >
+                          <span className="truncate">{tr.label}</span>
+                          <span className="text-[10px] uppercase opacity-70 ml-1">{tr.lang}</span>
+                        </button>
+                      ))}
+
+                      <div className="pt-1.5 mt-1.5 border-t border-zinc-800">
+                        <button
+                          onClick={() => {
+                            setShowSubtitlesMenu(false);
+                            setIsSubtitleModalOpen(true);
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-950/40 hover:text-rose-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <SlidersHorizontal className="w-3.5 h-3.5" />
+                          <span>Ajustes / Subir .SRT</span>
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1670,15 +1897,17 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
               {isUsingEmbed ? (
                 <div className="space-y-4 mb-4">
-                  <div className="p-3 rounded-xl bg-zinc-950/80 border border-zinc-800">
-                    <div className="flex items-center gap-2 mb-1">
+                  <div className="p-3.5 rounded-xl bg-zinc-950/90 border border-zinc-800">
+                    <div className="flex items-center gap-2 mb-1.5">
                       <Film className="w-4 h-4 text-amber-400" />
                       <span className="text-xs font-bold text-zinc-200">
                         {isGoogleDrive ? 'Reproductor Google Drive' : 'Reproductor Externo'}
                       </span>
                     </div>
                     <p className="text-[11px] text-zinc-400 leading-snug">
-                      La pausa, avance y volumen se controlan directamente en el reproductor. Usa Pantalla Completa para la mejor experiencia en celular.
+                      {isGoogleDrive
+                        ? 'Google Drive no muestra su botón de pantalla completa en celulares por restricciones del navegador. Usa las opciones de abajo para pantalla completa o abrir en la app de Drive.'
+                        : 'La pausa, avance y volumen se controlan directamente en el reproductor. Usa Pantalla Completa para la mejor experiencia en celular.'}
                     </p>
                   </div>
 
@@ -1688,21 +1917,33 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                         toggleFullscreen();
                         setShowMobileSettingsModal(false);
                       }}
-                      className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-bold text-white shadow-lg shadow-rose-950/50 cursor-pointer"
+                      className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-bold text-white shadow-lg shadow-rose-950/50 cursor-pointer min-h-[44px]"
                     >
                       <Maximize className="w-4 h-4" />
-                      <span>{isFullscreen ? 'Salir de Pantalla Completa' : 'Pantalla Completa'}</span>
+                      <span>{isFullscreen || mobileLogic.isEmbedExpandedFullscreen ? 'Salir de Pantalla Completa' : 'Pantalla Completa'}</span>
                     </button>
 
+                    {isGoogleDrive && (
+                      <button
+                        onClick={() => {
+                          mobileLogic.toggleEmbedFitMode();
+                        }}
+                        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 border border-zinc-700 cursor-pointer min-h-[44px]"
+                      >
+                        <Crop className="w-4 h-4 text-zinc-400" />
+                        <span>Ajuste: {mobileLogic.embedFitMode === 'cover' ? 'Llenar pantalla (Zoom)' : 'Original (16:9)'}</span>
+                      </button>
+                    )}
+
                     <a
-                      href={parsedSource.embedUrl || activeVideoUrl}
+                      href={parsedSource.directUrl || parsedSource.embedUrl || activeVideoUrl}
                       target="_blank"
                       rel="noreferrer"
                       onClick={() => setShowMobileSettingsModal(false)}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-amber-300 border border-zinc-700"
+                      className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-amber-500/95 hover:bg-amber-400 text-xs font-extrabold text-black shadow-lg shadow-amber-950/40 min-h-[44px]"
                     >
-                      <ExternalLink className="w-4 h-4" />
-                      <span>Abrir en Pantalla Completa Directa</span>
+                      <ExternalLink className="w-4 h-4 text-black" />
+                      <span>Abrir en Google Drive (Nativo con AirPlay)</span>
                     </a>
 
                     <button
@@ -1710,7 +1951,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                         onMinimize();
                         setShowMobileSettingsModal(false);
                       }}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 cursor-pointer"
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 cursor-pointer min-h-[44px]"
                     >
                       <Minimize2 className="w-4 h-4 text-rose-400" />
                       <span>Minimizar a Reproductor Flotante</span>
@@ -1719,24 +1960,74 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 </div>
               ) : (
                 <>
+                  {/* Control Style Switch (CineStream vs Native Browser Controls) */}
+                  <div className="mb-4 p-3 rounded-xl bg-zinc-950/90 border border-zinc-800">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold text-zinc-300">Estilo de Controles</span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                        {mobileLogic.useNativeControls ? 'Nativos del Navegador' : 'CineStream'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => mobileLogic.setUseNativeControls(false)}
+                        className={`py-2 px-2.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                          !mobileLogic.useNativeControls
+                            ? 'bg-rose-600 text-white border-rose-500 shadow-md'
+                            : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
+                        }`}
+                      >
+                        CineStream
+                      </button>
+                      <button
+                        onClick={() => mobileLogic.setUseNativeControls(true)}
+                        className={`py-2 px-2.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                          mobileLogic.useNativeControls
+                            ? 'bg-rose-600 text-white border-rose-500 shadow-md'
+                            : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
+                        }`}
+                      >
+                        Nativos ({mobileLogic.isIOS ? 'Safari' : 'Navegador'})
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Subtitles Section */}
                   <div className="mb-4">
-                    <span className="text-xs font-semibold text-zinc-400 block mb-2 uppercase tracking-wide">
-                      Subtítulos
-                    </span>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[
-                        { id: 'off', label: 'Sin subtítulos' },
-                        { id: 'es', label: 'Español' },
-                        { id: 'en', label: 'English' },
-                      ].map((sub) => (
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">
+                        Subtítulos
+                      </span>
+                      <button
+                        onClick={() => {
+                          setShowMobileSettingsModal(false);
+                          setIsSubtitleModalOpen(true);
+                        }}
+                        className="text-xs font-semibold text-rose-400 hover:text-rose-300 flex items-center gap-1 cursor-pointer"
+                      >
+                        <SlidersHorizontal className="w-3 h-3" />
+                        <span>Ajustes & Subir .SRT</span>
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => setSubtitleConfig({ ...subtitleConfig, trackId: 'off' })}
+                        className={`py-2 px-2.5 rounded-xl text-xs font-semibold border transition-all truncate cursor-pointer ${
+                          subtitleConfig.trackId === 'off'
+                            ? 'bg-rose-600 text-white border-rose-500 shadow-md'
+                            : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
+                        }`}
+                      >
+                        Desactivados
+                      </button>
+                      {availableTracks.map((sub) => (
                         <button
                           key={sub.id}
                           onClick={() => {
-                            setSelectedSubtitle(sub.id);
+                            setSubtitleConfig({ ...subtitleConfig, trackId: sub.id });
                           }}
-                          className={`py-2 px-2.5 rounded-xl text-xs font-semibold border transition-all ${
-                            selectedSubtitle === sub.id
+                          className={`py-2 px-2.5 rounded-xl text-xs font-semibold border transition-all truncate cursor-pointer ${
+                            subtitleConfig.trackId === sub.id || subtitleConfig.trackId === sub.lang
                               ? 'bg-rose-600 text-white border-rose-500 shadow-md'
                               : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
                           }`}
@@ -1800,7 +2091,278 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             </div>
           </div>
         )}
+        {/* Subtitles & Styling Modal */}
+        <SubtitleModal
+          isOpen={isSubtitleModalOpen}
+          onClose={() => setIsSubtitleModalOpen(false)}
+          movieTitle={activeDisplayTitle}
+          availableTracks={availableTracks}
+          config={subtitleConfig}
+          onConfigChange={setSubtitleConfig}
+          onAddCustomTrack={(newTrack) => {
+            setCustomTracks((prev) => [...prev, newTrack]);
+          }}
+        />
       </div>
+
+      {/* Mobile Portrait Detail & Action Hub (Directly Below 16:9 Video) */}
+      {isMobilePortrait && !isFullscreen && !mobileLogic.isEmbedExpandedFullscreen && (
+        <div className="w-full flex-1 p-4 space-y-5 pb-16 bg-zinc-950 text-white">
+          {/* Title & Metadata Badges */}
+          <div>
+            <div className="flex flex-wrap items-center gap-1.5 mb-2">
+              <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-600 text-white tracking-wider">
+                {movie.contentType === 'series' ? 'SERIE' : movie.quality}
+              </span>
+              <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700">
+                {movie.ageRating}
+              </span>
+              <span className="text-zinc-400 text-xs">{movie.year}</span>
+              <span className="text-zinc-500 text-xs">•</span>
+              <span className="text-zinc-400 text-xs">
+                {movie.contentType === 'series' && activeEpisode
+                  ? `Ep. ${activeEpisode.episodeNumber}: ${activeEpisode.duration || movie.duration}m`
+                  : `${movie.duration}m`}
+              </span>
+              {isGoogleDrive && (
+                <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                  Google Drive
+                </span>
+              )}
+            </div>
+            <h1 className="text-xl font-bold text-white leading-tight">
+              {activeDisplayTitle}
+            </h1>
+          </div>
+
+          {/* Primary Mobile Action Buttons Grid */}
+          <div className="grid grid-cols-2 gap-2.5">
+            <button
+              onClick={toggleFullscreen}
+              className="flex items-center justify-center gap-2 py-3.5 px-3.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-950/60 active:scale-95 transition-all cursor-pointer min-h-[46px]"
+            >
+              <Maximize className="w-4 h-4" />
+              <span>Pantalla Completa</span>
+            </button>
+            <button
+              onClick={onMinimize}
+              className="flex items-center justify-center gap-2 py-3.5 px-3.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold text-xs border border-zinc-700 active:scale-95 transition-all cursor-pointer min-h-[46px]"
+            >
+              <Minimize2 className="w-4 h-4 text-zinc-300" />
+              <span>Minimizar</span>
+            </button>
+            <button
+              onClick={() => setIsSubtitleModalOpen(true)}
+              className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 text-xs font-semibold border border-zinc-800 active:scale-95 transition-all cursor-pointer min-h-[44px]"
+            >
+              <Subtitles className="w-4 h-4 text-rose-400" />
+              <span>Subtítulos ({availableTracks.length})</span>
+            </button>
+            <button
+              onClick={() => setShowMobileSettingsModal(true)}
+              className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 text-xs font-semibold border border-zinc-800 active:scale-95 transition-all cursor-pointer min-h-[44px]"
+            >
+              <SlidersHorizontal className="w-4 h-4 text-rose-400" />
+              <span>Ajustes / Opciones</span>
+            </button>
+          </div>
+
+          {/* Dedicated Google Drive Control Hub on Mobile */}
+          {isGoogleDrive && (
+            <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-500/10 via-zinc-900/95 to-zinc-900 border border-amber-500/35 space-y-3 shadow-xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Film className="w-4 h-4 text-amber-400" />
+                  <span className="text-xs font-bold text-amber-300">Controles Google Drive</span>
+                </div>
+                <span className="text-[10px] text-zinc-400 bg-zinc-800/80 px-2 py-0.5 rounded-full border border-zinc-700">
+                  {mobileLogic.isIOS ? 'Safari iOS' : 'Móvil'}
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-300 leading-snug">
+                En celulares, Google Drive no muestra su botón de pantalla completa por restricciones de Safari/iOS. Usa estos botones:
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={toggleFullscreen}
+                  className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md active:scale-95 cursor-pointer min-h-[44px]"
+                >
+                  <Maximize className="w-3.5 h-3.5" />
+                  <span>Pantalla Completa</span>
+                </button>
+                <a
+                  href={parsedSource.directUrl || parsedSource.embedUrl || activeVideoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs shadow-md active:scale-95 cursor-pointer min-h-[44px]"
+                  title="Abre en Google Drive para pantalla completa nativa con AirPlay"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-black" />
+                  <span>Abrir en Drive</span>
+                </a>
+              </div>
+              <div className="flex items-center justify-between pt-2 border-t border-zinc-800/80 text-[11px]">
+                <button
+                  onClick={mobileLogic.toggleEmbedFitMode}
+                  className="text-zinc-300 hover:text-white flex items-center gap-1.5 cursor-pointer py-1"
+                >
+                  <Crop className="w-3.5 h-3.5 text-zinc-400" />
+                  <span>Ajuste: {mobileLogic.embedFitMode === 'cover' ? 'Llenar pantalla' : 'Original 16:9'}</span>
+                </button>
+                <button
+                  onClick={() => {
+                    const urlToCopy = parsedSource.embedUrl || activeVideoUrl;
+                    if (navigator.clipboard && urlToCopy) {
+                      navigator.clipboard.writeText(urlToCopy);
+                      setResumeToast('Enlace de Google Drive copiado');
+                      setTimeout(() => setResumeToast(null), 3000);
+                    }
+                  }}
+                  className="text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer py-1"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copiar Enlace</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Controls Mode Switch for HTML5 Video on Mobile */}
+          {!isUsingEmbed && (
+            <div className="flex items-center justify-between p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 text-xs">
+              <div className="flex items-center gap-2">
+                <MonitorPlay className="w-4 h-4 text-rose-400 shrink-0" />
+                <div>
+                  <div className="font-semibold text-zinc-200">Estilo de Controles</div>
+                  <div className="text-[11px] text-zinc-400">
+                    {mobileLogic.useNativeControls ? 'Controles nativos del navegador' : 'Interfaz táctil CineStream'}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={mobileLogic.toggleNativeControls}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  mobileLogic.useNativeControls
+                    ? 'bg-rose-600 text-white shadow-md'
+                    : 'bg-zinc-800 text-zinc-300 hover:text-white'
+                }`}
+              >
+                {mobileLogic.useNativeControls ? 'Nativos' : 'CineStream'}
+              </button>
+            </div>
+          )}
+
+          {/* Series Episodes List (if Serie) */}
+          {hasEpisodes && (
+            <div>
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="flex items-center gap-2">
+                  <ListVideo className="w-4 h-4 text-rose-500" />
+                  <h3 className="text-white text-sm font-bold">
+                    Episodios ({episodesList.length})
+                  </h3>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {episodesList.map((ep, idx) => {
+                  const isCurrent = idx === currentEpisodeIndex;
+                  return (
+                    <button
+                      key={ep.id || idx}
+                      onClick={() => setCurrentEpisodeIndex(idx)}
+                      className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between gap-3 ${
+                        isCurrent
+                          ? 'bg-rose-950/40 border-rose-500/80 text-white'
+                          : 'bg-zinc-900/60 border-zinc-800/80 text-zinc-300 hover:bg-zinc-800/80'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 ${
+                            isCurrent ? 'bg-rose-600 text-white' : 'bg-zinc-800 text-zinc-400'
+                          }`}
+                        >
+                          {ep.episodeNumber || idx + 1}
+                        </div>
+                        <div className="truncate">
+                          <span className="text-xs font-semibold block truncate">
+                            {ep.title}
+                          </span>
+                          <span className="text-[11px] text-zinc-400">
+                            {ep.duration ? `${ep.duration} min` : 'Episodio'}
+                          </span>
+                        </div>
+                      </div>
+                      {isCurrent ? (
+                        <Play className="w-4 h-4 fill-rose-500 text-rose-500 shrink-0" />
+                      ) : (
+                        <Play className="w-4 h-4 text-zinc-500 shrink-0" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Synopsis & Genres */}
+          <div className="space-y-2">
+            <h3 className="text-zinc-400 text-xs font-bold uppercase tracking-wider">
+              Sinopsis
+            </h3>
+            <p className="text-zinc-300 text-xs leading-relaxed">
+              {movie.description || 'Sin descripción disponible.'}
+            </p>
+            {movie.genre && movie.genre.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {movie.genre.map((g) => (
+                  <span
+                    key={g}
+                    className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-900 text-zinc-400 border border-zinc-800"
+                  >
+                    {g}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Recommended Movies */}
+          {nextMovies.length > 0 && (
+            <div className="space-y-2.5 pt-2 border-t border-zinc-900">
+              <h3 className="text-zinc-400 text-xs font-bold uppercase tracking-wider">
+                Más Películas Recomendadas
+              </h3>
+              <div className="grid grid-cols-2 gap-2.5">
+                {nextMovies.slice(0, 4).map((rec) => (
+                  <button
+                    key={rec.id}
+                    onClick={() => onSelectMovie(rec)}
+                    className="group rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-rose-500 text-left transition-all flex flex-col"
+                  >
+                    <div className="aspect-video w-full relative overflow-hidden bg-zinc-950">
+                      <img
+                        src={rec.backdropUrl || rec.posterUrl}
+                        alt={rec.title}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                      />
+                    </div>
+                    <div className="p-2">
+                      <span className="text-white text-xs font-semibold block truncate">
+                        {rec.title}
+                      </span>
+                      <span className="text-[10px] text-zinc-400">
+                        {rec.year} • {rec.duration}m
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

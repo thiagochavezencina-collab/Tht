@@ -1,5 +1,14 @@
 export type MediaContentType = 'movie' | 'series';
 
+export interface SubtitleTrack {
+  id: string;
+  lang: string;
+  label: string;
+  url?: string;
+  fileName?: string;
+  cues?: { start: number; end: number; text: string }[];
+}
+
 export interface Episode {
   id: string;
   episodeNumber: number;
@@ -12,6 +21,7 @@ export interface Episode {
   hasLocalFile?: boolean;
   fileName?: string;
   description?: string;
+  subtitles?: SubtitleTrack[];
 }
 
 export interface Movie {
@@ -32,11 +42,7 @@ export interface Movie {
   videoUrl: string; // Main playable video or first episode
   episodes?: Episode[]; // For series
   seasonsCount?: number; // For series
-  subtitles?: {
-    lang: string;
-    label: string;
-    cues?: { start: number; end: number; text: string }[];
-  }[];
+  subtitles?: SubtitleTrack[];
   isFeatured?: boolean;
   featuredQuote?: string;
   quality: '4K Ultra HD' | 'Full HD 1080p' | 'HD 720p';

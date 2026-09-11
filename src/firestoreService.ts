@@ -72,12 +72,24 @@ function prepareMovieForFirestore(movie: Movie): Record<string, any> {
       })
     : undefined;
 
+  const safeSubtitles = Array.isArray(movie.subtitles)
+    ? movie.subtitles.map((sub) => ({
+        id: sub.id || `sub-${Date.now()}`,
+        lang: sub.lang || 'es',
+        label: sub.label || 'Español',
+        url: typeof sub.url === 'string' && sub.url.startsWith('blob:') ? '' : sub.url || '',
+        fileName: sub.fileName || '',
+        cues: Array.isArray(sub.cues) ? sub.cues : [],
+      }))
+    : undefined;
+
   return {
     ...movie,
     videoUrl: safeVideoUrl,
     hasLocalFile: isBlobVideo || !!movie.hasLocalFile,
     fileName: movie.fileName || '',
     ...(safeEpisodes ? { episodes: safeEpisodes } : {}),
+    ...(safeSubtitles ? { subtitles: safeSubtitles } : {}),
   };
 }
 

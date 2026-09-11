@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, Edit3, Film, Tv, Clock, Calendar, Link2, Trash2, ListVideo, Upload } from 'lucide-react';
-import { Movie, Episode } from '../types';
+import { Movie, Episode, SubtitleTrack } from '../types';
 import { saveVideoBlob } from '../utils/videoStorage';
+import { SubtitleFormSection } from './SubtitleFormSection';
 
 interface EditMovieModalProps {
   isOpen: boolean;
@@ -28,6 +29,7 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
   const [backdropUrl, setBackdropUrl] = useState('');
   const [genres, setGenres] = useState('');
   const [episodes, setEpisodes] = useState<Episode[]>([]);
+  const [subtitles, setSubtitles] = useState<SubtitleTrack[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState('');
 
@@ -43,6 +45,7 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
       setBackdropUrl(movie.backdropUrl || '');
       setGenres((movie.genres || []).join(', '));
       setEpisodes(movie.episodes ? [...movie.episodes] : []);
+      setSubtitles(movie.subtitles ? [...movie.subtitles] : []);
       setFileName(movie.fileName || '');
       setSelectedFile(null);
     }
@@ -94,6 +97,7 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
       episodes: movie.contentType === 'series' && episodes.length > 0 ? episodes : (movie.episodes || []),
       hasLocalFile: !!selectedFile || movie.hasLocalFile,
       fileName: selectedFile ? selectedFile.name : (fileName || movie.fileName || ''),
+      ...(subtitles.length > 0 ? { subtitles } : { subtitles: [] }),
     };
 
     onSave(updated);
@@ -365,6 +369,9 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
               </div>
             </div>
           )}
+
+          {/* Subtitles Management */}
+          <SubtitleFormSection subtitles={subtitles} onChange={setSubtitles} />
 
           {/* Footer Actions */}
           <div className="pt-4 border-t border-zinc-800 flex items-center justify-between gap-3">

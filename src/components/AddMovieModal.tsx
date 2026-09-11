@@ -12,8 +12,9 @@ import {
   ListVideo,
   Globe,
 } from 'lucide-react';
-import { Movie, Episode, MediaContentType } from '../types';
+import { Movie, Episode, MediaContentType, SubtitleTrack } from '../types';
 import { saveVideoBlob } from '../utils/videoStorage';
+import { SubtitleFormSection } from './SubtitleFormSection';
 
 interface AddMovieModalProps {
   onClose: () => void;
@@ -35,6 +36,7 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({ onClose, onAddMovi
   const [duration, setDuration] = useState('110');
   const [synopsis, setSynopsis] = useState('');
   const [fileName, setFileName] = useState('');
+  const [subtitles, setSubtitles] = useState<SubtitleTrack[]>([]);
   const [selectedVideoFile, setSelectedVideoFile] = useState<File | null>(null);
   const episodeFilesRef = useRef<{ [idx: number]: File }>({});
 
@@ -189,6 +191,7 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({ onClose, onAddMovi
       originalTitle: '',
       hasLocalFile: !!selectedVideoFile || Object.keys(episodeFilesRef.current).length > 0,
       fileName: fileName || selectedVideoFile?.name || '',
+      ...(subtitles.length > 0 ? { subtitles } : {}),
       ...(contentType === 'series' && finalEpisodes
         ? { episodes: finalEpisodes, seasonsCount: 1 }
         : {}),
@@ -556,6 +559,9 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({ onClose, onAddMovi
               className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-rose-500 resize-none"
             />
           </div>
+
+          {/* Subtitles Manager */}
+          <SubtitleFormSection subtitles={subtitles} onChange={setSubtitles} />
 
           <button
             type="submit"
