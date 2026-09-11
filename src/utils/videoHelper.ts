@@ -31,16 +31,29 @@ export function parseVideoSource(rawUrl: string): ParsedVideoSource {
 
   // If user pasted an iframe tag like <iframe src="...">
   const iframeMatch = url.match(/src=["']([^"']+)["']/i);
-  if (iframeMatch) {
+  const targetUrl = iframeMatch ? iframeMatch[1] : url;
+
+  // Google Drive (supports:
+  // - drive.google.com/file/d/{id}/...
+  // - drive.google.com/file/u/{n}/d/{id}/...
+  // - drive.google.com/open?id={id}
+  // - drive.google.com/uc?id={id}
+  // - docs.google.com/file/d/{id}/...
+  const gdriveMatch = targetUrl.match(
+    /(?:drive|docs)\.google\.com\/(?:file\/(?:u\/\d+\/)?d\/|open\?(?:.*&)?id=|uc\?(?:.*&)?id=)([a-zA-Z0-9_-]{15,})/i
+  );
+  if (gdriveMatch) {
+    const fileId = gdriveMatch[1];
     return {
-      type: 'embed',
-      embedUrl: iframeMatch[1],
+      type: 'googledrive',
+      embedUrl: `https://drive.google.com/file/d/${fileId}/preview`,
+      directUrl: `https://drive.google.com/file/d/${fileId}/view`,
       originalUrl: url,
     };
   }
 
   // YouTube (standard watch, youtu.be, shorts, embed)
-  const ytMatch = url.match(
+  const ytMatch = targetUrl.match(
     /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/i
   );
   if (ytMatch) {
@@ -53,7 +66,7 @@ export function parseVideoSource(rawUrl: string): ParsedVideoSource {
   }
 
   // Vimeo
-  const vimeoMatch = url.match(
+  const vimeoMatch = targetUrl.match(
     /vimeo\.com\/(?:channels\/(?:\w+\/)?|groups\/[^\/]*\/videos\/|album\/(?:\d+\/)?video\/|video\/|)(\d+)/i
   );
   if (vimeoMatch) {
@@ -65,24 +78,22 @@ export function parseVideoSource(rawUrl: string): ParsedVideoSource {
     };
   }
 
-  // Google Drive
-  const gdriveMatch = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i);
-  if (gdriveMatch) {
-    const fileId = gdriveMatch[1];
-    return {
-      type: 'googledrive',
-      embedUrl: `https://drive.google.com/file/d/${fileId}/preview`,
-      originalUrl: url,
-    };
-  }
-
   // DailyMotion
-  const dmMatch = url.match(/dailymotion\.com\/video\/([a-zA-Z0-9]+)/i);
+  const dmMatch = targetUrl.match(/dailymotion\.com\/video\/([a-zA-Z0-9]+)/i);
   if (dmMatch) {
     const dmId = dmMatch[1];
     return {
       type: 'dailymotion',
       embedUrl: `https://www.dailymotion.com/embed/video/${dmId}?autoplay=1`,
+      originalUrl: url,
+    };
+  }
+
+  // If was an iframe but not recognized above, still treat as embed
+  if (iframeMatch) {
+    return {
+      type: 'embed',
+      embedUrl: iframeMatch[1],
       originalUrl: url,
     };
   }

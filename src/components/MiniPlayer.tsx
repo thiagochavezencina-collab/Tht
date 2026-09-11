@@ -41,7 +41,8 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({
     parsedSource.type === 'youtube' ||
     parsedSource.type === 'vimeo' ||
     parsedSource.type === 'googledrive' ||
-    parsedSource.type === 'dailymotion';
+    parsedSource.type === 'dailymotion' ||
+    parsedSource.type === 'embed';
 
   useEffect(() => {
     if (!isEmbed && videoRef.current) {

@@ -140,12 +140,14 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
   // Source detection
   const parsedSource = parseVideoSource(playableVideoUrl);
-  // Only embed if explicitly YouTube, Vimeo, Google Drive, or DailyMotion
+  // Embed platforms: YouTube, Vimeo, Google Drive, DailyMotion, or raw iframe embeds
   const isEmbedSource =
     parsedSource.type === 'youtube' ||
     parsedSource.type === 'vimeo' ||
     parsedSource.type === 'googledrive' ||
-    parsedSource.type === 'dailymotion';
+    parsedSource.type === 'dailymotion' ||
+    parsedSource.type === 'embed';
+  const isGoogleDrive = parsedSource.type === 'googledrive';
 
   const [currentTime, setCurrentTime] = useState(initialTime);
   const [duration, setDuration] = useState(0);
@@ -323,13 +325,13 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       clearTimeout(controlsTimeoutRef.current);
     }
     controlsTimeoutRef.current = setTimeout(() => {
-      if (isPlaying) {
+      if (isEmbedSource || isPlaying) {
         setAreControlsVisible(false);
         setShowSpeedMenu(false);
         setShowSubtitlesMenu(false);
       }
     }, 3500);
-  }, [isPlaying]);
+  }, [isEmbedSource, isPlaying]);
 
   // Video time update listener
   const handleTimeUpdate = () => {
@@ -469,14 +471,80 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
-    if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().catch(() => {});
+    const elem = containerRef.current as any;
+    const doc = document as any;
+
+    const isCurrentFs = !!(
+      doc.fullscreenElement ||
+      doc.webkitFullscreenElement ||
+      doc.mozFullScreenElement ||
+      doc.msFullscreenElement
+    );
+
+    if (!isCurrentFs) {
+      if (elem.requestFullscreen) {
+        elem.requestFullscreen().catch(() => {});
+      } else if (elem.webkitRequestFullscreen) {
+        elem.webkitRequestFullscreen();
+      } else if (elem.mozRequestFullScreen) {
+        elem.mozRequestFullScreen();
+      } else if (elem.msRequestFullscreen) {
+        elem.msRequestFullscreen();
+      }
       setIsFullscreen(true);
+      try {
+        if (screen.orientation && (screen.orientation as any).lock) {
+          (screen.orientation as any).lock('landscape').catch(() => {});
+        }
+      } catch {
+        // Mobile orientation lock is optional/browser-dependent
+      }
     } else {
-      document.exitFullscreen().catch(() => {});
+      if (doc.exitFullscreen) {
+        doc.exitFullscreen().catch(() => {});
+      } else if (doc.webkitExitFullscreen) {
+        doc.webkitExitFullscreen();
+      } else if (doc.mozCancelFullScreen) {
+        doc.mozCancelFullScreen();
+      } else if (doc.msExitFullscreen) {
+        doc.msExitFullscreen();
+      }
       setIsFullscreen(false);
+      try {
+        if (screen.orientation && (screen.orientation as any).unlock) {
+          (screen.orientation as any).unlock();
+        }
+      } catch {
+        // Ignore
+      }
     }
   };
+
+  // Fullscreen change listener to keep isFullscreen state synchronized
+  useEffect(() => {
+    const handleFsChange = () => {
+      const doc = document as any;
+      const isFs = !!(
+        doc.fullscreenElement ||
+        doc.webkitFullscreenElement ||
+        doc.mozFullScreenElement ||
+        doc.msFullscreenElement
+      );
+      setIsFullscreen(isFs);
+    };
+
+    document.addEventListener('fullscreenchange', handleFsChange);
+    document.addEventListener('webkitfullscreenchange', handleFsChange);
+    document.addEventListener('mozfullscreenchange', handleFsChange);
+    document.addEventListener('MSFullscreenChange', handleFsChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      document.removeEventListener('webkitfullscreenchange', handleFsChange);
+      document.removeEventListener('mozfullscreenchange', handleFsChange);
+      document.removeEventListener('MSFullscreenChange', handleFsChange);
+    };
+  }, []);
 
   const handlePiP = async () => {
     if (!videoRef.current) return;
@@ -660,7 +728,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       {/* Main Video Wrapper */}
       <div
         className={`relative w-full overflow-hidden bg-black shadow-2xl transition-all duration-300 ${
-          isTheaterMode || isFullscreen
+          isTheaterMode || isFullscreen || isUsingEmbed
             ? 'h-full w-full rounded-none'
             : 'h-full sm:h-auto max-w-6xl aspect-auto sm:aspect-video sm:max-h-[85vh] rounded-none sm:rounded-2xl border-0 sm:border border-zinc-800/80 shadow-rose-950/20'
         }`}
@@ -672,8 +740,14 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               src={parsedSource.embedUrl || playableVideoUrl}
               title={activeDisplayTitle}
               className="w-full h-full border-0 bg-black"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
               allowFullScreen
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+              // @ts-ignore
+              webkitallowfullscreen="true"
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+              // @ts-ignore
+              mozallowfullscreen="true"
             />
           </div>
         ) : (
@@ -975,18 +1049,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               </div>
             )}
 
-            {/* Big Center Play / Pause Indicator */}
-            {!isPlaying && !hasEnded && !hasVideoError && (
-              <div
-                onClick={togglePlay}
-                className="absolute inset-0 flex items-center justify-center bg-black/40 cursor-pointer backdrop-blur-[2px] transition-opacity"
-              >
-                <div className="w-20 h-20 rounded-full bg-rose-600/90 text-white flex items-center justify-center shadow-2xl shadow-rose-900/60 hover:scale-110 transition-transform ring-4 ring-white/20">
-                  <Play className="w-9 h-9 fill-white translate-x-0.5" />
-                </div>
-              </div>
-            )}
-
             {/* Subtitles Overlay */}
             {currentSubtitleText && !hasVideoError && (
               <div className="absolute bottom-20 left-0 right-0 px-6 text-center pointer-events-none z-20">
@@ -1026,9 +1088,15 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               <span className="px-1.5 sm:px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-bold bg-rose-600 text-white tracking-wider">
                 {movie.contentType === 'series' ? 'SERIE' : movie.quality}
               </span>
-              <span className="hidden xs:inline px-1.5 py-0.5 rounded text-[10px] sm:text-[11px] font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700">
-                {movie.ageRating}
-              </span>
+              {isGoogleDrive ? (
+                <span className="px-1.5 sm:px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                  Drive
+                </span>
+              ) : (
+                <span className="hidden xs:inline px-1.5 py-0.5 rounded text-[10px] sm:text-[11px] font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700">
+                  {movie.ageRating}
+                </span>
+              )}
             </div>
             <h2 className="text-white font-semibold text-xs sm:text-base md:text-lg truncate drop-shadow-md">
               {activeDisplayTitle}
@@ -1072,16 +1140,30 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               <span>Fuente de Video</span>
             </button>
 
-            {/* External link button */}
+            {/* External link button (Direct Fullscreen / Google Drive) */}
             <a
-              href={activeVideoUrl}
+              href={parsedSource.embedUrl || activeVideoUrl}
               target="_blank"
               rel="noreferrer"
-              className="hidden sm:flex p-2 rounded-xl bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors"
-              title="Abrir fuente de video en nueva pestaña"
+              className="flex p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] items-center justify-center border border-zinc-700/40"
+              title={isGoogleDrive ? 'Abrir en Google Drive directamente' : 'Abrir fuente de video en nueva pestaña'}
             >
-              <ExternalLink className="w-4 h-4" />
+              <ExternalLink className="w-4 h-4 text-amber-400" />
             </a>
+
+            {/* Top Bar Fullscreen Button (Crucial for mobile and Google Drive) */}
+            <button
+              onClick={toggleFullscreen}
+              className="p-2 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white transition-colors min-w-[38px] min-h-[38px] flex items-center justify-center border border-zinc-700/40 cursor-pointer"
+              title={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+              aria-label="Pantalla completa"
+            >
+              {isFullscreen ? (
+                <Minimize className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400" />
+              ) : (
+                <Maximize className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400" />
+              )}
+            </button>
 
             {/* PiP Button (for native videos) */}
             {!isUsingEmbed && (
@@ -1113,6 +1195,43 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Floating Quick Action Pill for Embeds / Google Drive when Top Bar auto-hides */}
+        {isUsingEmbed && !areControlsVisible && (
+          <div className="absolute top-2.5 right-2.5 sm:top-3 sm:right-3 z-30 flex items-center gap-1.5 animate-fade-in pointer-events-auto">
+            <button
+              onClick={() => {
+                setAreControlsVisible(true);
+                showControlsTemporarily();
+              }}
+              className="px-2.5 py-1.5 rounded-full bg-black/75 hover:bg-black/95 text-white/90 text-xs font-semibold backdrop-blur-md border border-white/20 transition-all shadow-xl active:scale-95 flex items-center gap-1 cursor-pointer"
+              title="Mostrar menú CineStream"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 text-rose-400" />
+              <span className="hidden xs:inline">Menú</span>
+            </button>
+            <button
+              onClick={toggleFullscreen}
+              className="p-2 rounded-full bg-black/75 hover:bg-black/95 text-white/90 backdrop-blur-md border border-white/20 transition-all shadow-xl active:scale-95 cursor-pointer"
+              title={isFullscreen ? 'Salir de Pantalla Completa' : 'Pantalla Completa'}
+              aria-label="Pantalla completa"
+            >
+              {isFullscreen ? (
+                <Minimize className="w-3.5 h-3.5 text-rose-400" />
+              ) : (
+                <Maximize className="w-3.5 h-3.5 text-rose-400" />
+              )}
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-full bg-black/75 hover:bg-rose-600 text-white/90 backdrop-blur-md border border-white/20 transition-all shadow-xl active:scale-95 cursor-pointer"
+              title="Cerrar reproductor"
+              aria-label="Cerrar"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Side Episodes Drawer for Series */}
         {hasEpisodes && showEpisodesDrawer && (
@@ -1549,57 +1668,110 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 </button>
               </div>
 
-              {/* Subtitles Section */}
-              <div className="mb-4">
-                <span className="text-xs font-semibold text-zinc-400 block mb-2 uppercase tracking-wide">
-                  Subtítulos
-                </span>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { id: 'off', label: 'Sin subtítulos' },
-                    { id: 'es', label: 'Español' },
-                    { id: 'en', label: 'English' },
-                  ].map((sub) => (
-                    <button
-                      key={sub.id}
-                      onClick={() => {
-                        setSelectedSubtitle(sub.id);
-                      }}
-                      className={`py-2 px-2.5 rounded-xl text-xs font-semibold border transition-all ${
-                        selectedSubtitle === sub.id
-                          ? 'bg-rose-600 text-white border-rose-500 shadow-md'
-                          : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
-                      }`}
-                    >
-                      {sub.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              {isUsingEmbed ? (
+                <div className="space-y-4 mb-4">
+                  <div className="p-3 rounded-xl bg-zinc-950/80 border border-zinc-800">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Film className="w-4 h-4 text-amber-400" />
+                      <span className="text-xs font-bold text-zinc-200">
+                        {isGoogleDrive ? 'Reproductor Google Drive' : 'Reproductor Externo'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 leading-snug">
+                      La pausa, avance y volumen se controlan directamente en el reproductor. Usa Pantalla Completa para la mejor experiencia en celular.
+                    </p>
+                  </div>
 
-              {/* Playback Speed Section */}
-              <div className="mb-4">
-                <span className="text-xs font-semibold text-zinc-400 block mb-2 uppercase tracking-wide">
-                  Velocidad de reproducción
-                </span>
-                <div className="grid grid-cols-3 gap-2">
-                  {[0.5, 0.75, 1, 1.25, 1.5, 2].map((s) => (
+                  <div className="space-y-2">
                     <button
-                      key={s}
                       onClick={() => {
-                        handleSpeedSelect(s);
+                        toggleFullscreen();
+                        setShowMobileSettingsModal(false);
                       }}
-                      className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all ${
-                        playbackSpeed === s
-                          ? 'bg-rose-600 text-white border-rose-500 shadow-md'
-                          : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
-                      }`}
+                      className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-bold text-white shadow-lg shadow-rose-950/50 cursor-pointer"
                     >
-                      {s}x {s === 1 ? '(Normal)' : ''}
+                      <Maximize className="w-4 h-4" />
+                      <span>{isFullscreen ? 'Salir de Pantalla Completa' : 'Pantalla Completa'}</span>
                     </button>
-                  ))}
+
+                    <a
+                      href={parsedSource.embedUrl || activeVideoUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => setShowMobileSettingsModal(false)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-amber-300 border border-zinc-700"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      <span>Abrir en Pantalla Completa Directa</span>
+                    </a>
+
+                    <button
+                      onClick={() => {
+                        onMinimize();
+                        setShowMobileSettingsModal(false);
+                      }}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 cursor-pointer"
+                    >
+                      <Minimize2 className="w-4 h-4 text-rose-400" />
+                      <span>Minimizar a Reproductor Flotante</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <>
+                  {/* Subtitles Section */}
+                  <div className="mb-4">
+                    <span className="text-xs font-semibold text-zinc-400 block mb-2 uppercase tracking-wide">
+                      Subtítulos
+                    </span>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { id: 'off', label: 'Sin subtítulos' },
+                        { id: 'es', label: 'Español' },
+                        { id: 'en', label: 'English' },
+                      ].map((sub) => (
+                        <button
+                          key={sub.id}
+                          onClick={() => {
+                            setSelectedSubtitle(sub.id);
+                          }}
+                          className={`py-2 px-2.5 rounded-xl text-xs font-semibold border transition-all ${
+                            selectedSubtitle === sub.id
+                              ? 'bg-rose-600 text-white border-rose-500 shadow-md'
+                              : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
+                          }`}
+                        >
+                          {sub.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Playback Speed Section */}
+                  <div className="mb-4">
+                    <span className="text-xs font-semibold text-zinc-400 block mb-2 uppercase tracking-wide">
+                      Velocidad de reproducción
+                    </span>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[0.5, 0.75, 1, 1.25, 1.5, 2].map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => {
+                            handleSpeedSelect(s);
+                          }}
+                          className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all ${
+                            playbackSpeed === s
+                              ? 'bg-rose-600 text-white border-rose-500 shadow-md'
+                              : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
+                          }`}
+                        >
+                          {s}x {s === 1 ? '(Normal)' : ''}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* Quick Actions (Fullscreen, Mute, Source) */}
               <div className="pt-2 border-t border-zinc-800 space-y-2">
