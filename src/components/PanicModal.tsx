@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   ShieldAlert,
@@ -10,12 +10,17 @@ import {
   Sliders,
   AlertTriangle,
   Zap,
+  Image as ImageIcon,
+  Upload,
+  Check,
 } from 'lucide-react';
+import { CUSTOM_DISGUISE_IMAGE_KEY } from './disguise/ScreenshotOverlayView';
 
 export interface PanicConfig {
   destination: 'aleks' | 'pearson' | 'beeverso' | 'classroom' | 'custom';
   customUrl: string;
-  action: 'redirect' | 'disguise';
+  action: 'disguise' | 'redirect';
+  disguiseType?: 'interactive' | 'screenshot_overlay';
   blurTrigger: boolean; // trigger on window blur
   hotkey: 'double_esc' | 'tilde' | 'f2';
   stealthMode: boolean; // Disfraz continuo en toda la interfaz
@@ -25,6 +30,7 @@ export const DEFAULT_PANIC_CONFIG: PanicConfig = {
   destination: 'aleks',
   customUrl: '',
   action: 'disguise',
+  disguiseType: 'interactive',
   blurTrigger: false,
   hotkey: 'double_esc',
   stealthMode: false,
@@ -243,7 +249,7 @@ export const PanicModal: React.FC<PanicModalProps> = ({
                   </span>
                 </div>
                 <p className="text-[10px] text-zinc-400 leading-relaxed">
-                  Activa la pantalla idéntica de ALEKS, Pearson o Beeverso con minijuegos funcionales sin salir de la app ni ponerse en blanco.
+                  Activa la pantalla idéntica de ALEKS, Pearson o Google Classroom con ejercicios reales o imagen sobrepuesta.
                 </p>
               </button>
 
@@ -265,6 +271,87 @@ export const PanicModal: React.FC<PanicModalProps> = ({
                 </p>
               </button>
             </div>
+
+            {/* Sub-selector for Disguise Type: Interactive Simulation vs Screenshot Overlay */}
+            {localConfig.action === 'disguise' && (
+              <div className="mt-3 p-3.5 bg-zinc-900/90 border border-zinc-800 rounded-2xl space-y-3">
+                <label className="text-[11px] font-bold text-amber-300 uppercase tracking-wider block">
+                  Estilo de Camuflaje Escolar:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setLocalConfig({ ...localConfig, disguiseType: 'interactive' })}
+                    className={`p-2.5 rounded-xl border text-left text-xs transition-all ${
+                      (localConfig.disguiseType || 'interactive') === 'interactive'
+                        ? 'bg-amber-950/40 border-amber-500 text-amber-200 font-semibold'
+                        : 'bg-zinc-950/60 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    <div className="font-bold flex items-center justify-between">
+                      <span>Simulación Interactiva</span>
+                      {(localConfig.disguiseType || 'interactive') === 'interactive' && (
+                        <Check className="w-3.5 h-3.5 text-amber-400" />
+                      )}
+                    </div>
+                    <span className="text-[10px] text-zinc-400 block mt-0.5">
+                      Botones, ejercicios matemáticos y formularios 100% navegables
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLocalConfig({ ...localConfig, disguiseType: 'screenshot_overlay' })}
+                    className={`p-2.5 rounded-xl border text-left text-xs transition-all ${
+                      localConfig.disguiseType === 'screenshot_overlay'
+                        ? 'bg-amber-950/40 border-amber-500 text-amber-200 font-semibold'
+                        : 'bg-zinc-950/60 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    <div className="font-bold flex items-center justify-between">
+                      <span>Imagen Sobrepuesta (Captura)</span>
+                      {localConfig.disguiseType === 'screenshot_overlay' && (
+                        <Check className="w-3.5 h-3.5 text-amber-400" />
+                      )}
+                    </div>
+                    <span className="text-[10px] text-zinc-400 block mt-0.5">
+                      Captura fija ultra realista con reloj en vivo o foto subida por ti
+                    </span>
+                  </button>
+                </div>
+
+                {/* Optional Custom Screenshot Uploader */}
+                <div className="pt-2 border-t border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <span className="text-[11px] text-zinc-300">
+                    ¿Quieres usar una foto de tu propia pantalla o tarea escolar?
+                  </span>
+                  <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-xs font-semibold border border-zinc-700 transition-colors shrink-0">
+                    <Upload className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Subir captura (.png, .jpg)</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                          const base64 = event.target?.result as string;
+                          if (base64) {
+                            try {
+                              localStorage.setItem(CUSTOM_DISGUISE_IMAGE_KEY, base64);
+                              setLocalConfig({ ...localConfig, disguiseType: 'screenshot_overlay' });
+                            } catch {}
+                          }
+                        };
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Permanent Stealth Skin Mode */}

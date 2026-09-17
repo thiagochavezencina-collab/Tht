@@ -14,8 +14,10 @@ import {
   CheckCircle2,
   Trash2,
   HelpCircle,
-  Tv
+  Tv,
+  History,
 } from 'lucide-react';
+import { useSearchHistory } from './hooks/useSearchHistory';
 import { Movie, WatchProgress, UserReview, MovieSuggestion } from './types';
 import { INITIAL_MOVIES, INITIAL_REVIEWS, INITIAL_SUGGESTIONS, GENRES } from './data/movies';
 import { Navbar } from './components/Navbar';
@@ -31,6 +33,7 @@ import { SuggestionsSection } from './components/SuggestionsSection';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { PanicModal, PanicConfig, DEFAULT_PANIC_CONFIG } from './components/PanicModal';
 import { DisguiseScreen } from './components/DisguiseScreen';
+import { PinLockScreen } from './components/PinLockScreen';
 import { applyStealthMeta } from './utils/stealthHelper';
 import {
   saveMovieToFirestore,
@@ -134,6 +137,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGenre, setSelectedGenre] = useState('Todos');
   const [sortBy, setSortBy] = useState<'rating' | 'year' | 'duration' | 'views'>('rating');
+  const { history: searchHistory, saveTerm: saveSearchTerm } = useSearchHistory();
 
   // Community Suggestions & Requests state (sanitized of any fake mock suggestions)
   const [suggestions, setSuggestions] = useState<MovieSuggestion[]>(() => {
@@ -187,6 +191,26 @@ export default function App() {
   const [isDisguiseActive, setIsDisguiseActive] = useState(false);
   const lastEscTimeRef = useRef<number>(0);
 
+  // 4-Digit Security PIN Lock state before entering CineStream
+  // MUST ALWAYS start as false so entering the app requires the PIN 6767
+  const [isAppUnlocked, setIsAppUnlocked] = useState<boolean>(false);
+
+  const handleUnlockApp = () => {
+    setIsAppUnlocked(true);
+    try {
+      sessionStorage.setItem('cinestream_app_is_unlocked', 'true');
+    } catch {}
+  };
+
+  const handleLockApp = () => {
+    setIsAppUnlocked(false);
+    try {
+      sessionStorage.removeItem('cinestream_app_is_unlocked');
+    } catch {}
+    setActivePlayerMovie(null);
+    setMiniPlayerMovie(null);
+  };
+
   const triggerPanic = (cfg: PanicConfig = panicConfig) => {
     // Immediately stop and close any playing media or open modals
     setActivePlayerMovie(null);
@@ -195,6 +219,10 @@ export default function App() {
     setIsAddMovieModalOpen(false);
     setIsEditModalOpen(false);
     setIsPanicModalOpen(false);
+    setIsAppUnlocked(false);
+    try {
+      sessionStorage.removeItem('cinestream_app_is_unlocked');
+    } catch {}
 
     let destinationUrl = 'https://www.aleks.com';
     if (cfg.destination === 'aleks') destinationUrl = 'https://www.aleks.com';
@@ -771,6 +799,7 @@ export default function App() {
         cloudMoviesCount={firestoreMovies.length}
         onSyncCloud={handleManualSync}
         onOpenPanicModal={() => setIsPanicModalOpen(true)}
+        onLockApp={handleLockApp}
         stealthConfig={panicConfig}
       />
 
@@ -779,7 +808,7 @@ export default function App() {
         {/* Search Results Display */}
         {searchQuery.trim() ? (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-4">
               <h1 className="text-xl sm:text-2xl font-bold font-['Outfit'] flex items-center gap-2">
                 <Search className="w-5 h-5 text-rose-500" />
                 <span>Resultados para: "{searchQuery}"</span>
@@ -789,18 +818,70 @@ export default function App() {
               </span>
             </div>
 
+            {/* Quick Recent Search Chips (Last 5 searches) */}
+            {searchHistory.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap mb-6 text-xs">
+                <span className="text-zinc-400 flex items-center gap-1.5 font-semibold text-[11px]">
+                  <History className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  <span>Búsquedas recientes:</span>
+                </span>
+                {searchHistory.map((term) => (
+                  <button
+                    key={term}
+                    onClick={() => {
+                      setSearchQuery(term);
+                      saveSearchTerm(term);
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                      searchQuery.toLowerCase() === term.toLowerCase()
+                        ? 'bg-rose-600 text-white border-rose-500 shadow-sm shadow-rose-900/30'
+                        : 'bg-zinc-900/90 text-zinc-300 border-zinc-800 hover:border-zinc-700 hover:text-white'
+                    }`}
+                    title={`Buscar "${term}" nuevamente`}
+                  >
+                    {term}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {filteredMovies.length === 0 ? (
-              <div className="text-center py-20 bg-zinc-900/30 rounded-3xl border border-zinc-800/80 p-8 max-w-lg mx-auto">
+              <div className="text-center py-16 bg-zinc-900/30 rounded-3xl border border-zinc-800/80 p-8 max-w-lg mx-auto">
                 <Film className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
                 <h3 className="text-lg font-bold text-white mb-1">
                   No encontramos ninguna película con ese criterio
                 </h3>
-                <p className="text-xs text-zinc-400 mb-6">
-                  Intenta buscar por título, director, actor o género, o carga tu propia película.
+                <p className="text-xs text-zinc-400 mb-5">
+                  Intenta buscar por título, director, actor o género, o selecciona una búsqueda reciente.
                 </p>
+
+                {searchHistory.length > 1 && (
+                  <div className="mb-6 p-3 bg-zinc-950/60 rounded-2xl border border-zinc-800/60">
+                    <span className="text-[11px] text-zinc-400 block mb-2 font-medium">
+                      O prueba con otra búsqueda anterior:
+                    </span>
+                    <div className="flex flex-wrap justify-center gap-1.5">
+                      {searchHistory
+                        .filter((t) => t.toLowerCase() !== searchQuery.toLowerCase())
+                        .map((term) => (
+                          <button
+                            key={term}
+                            onClick={() => {
+                              setSearchQuery(term);
+                              saveSearchTerm(term);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-300 text-xs font-medium transition-colors cursor-pointer"
+                          >
+                            {term}
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
                 <button
                   onClick={() => setIsAddMovieModalOpen(true)}
-                  className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors inline-flex items-center gap-2"
+                  className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors inline-flex items-center gap-2 cursor-pointer"
                 >
                   <PlusCircle className="w-4 h-4" />
                   <span>Cargar Película Personalizada</span>
@@ -1424,11 +1505,21 @@ export default function App() {
         onTriggerPanic={() => triggerPanic()}
       />
 
-      {/* IN-TAB CAMOUFLAGE SCREEN (ALEKS / Pearson / Beeverso Study Screen) */}
+      {/* 4-DIGIT SECURITY PIN LOCK SCREEN (Before entering the app) */}
+      {!isAppUnlocked && !isDisguiseActive && (
+        <PinLockScreen
+          onUnlock={handleUnlockApp}
+        />
+      )}
+
+      {/* IN-TAB CAMOUFLAGE SCREEN (ALEKS / Pearson / Beeverso Study Screen & Disguise Login) */}
       {isDisguiseActive && (
         <DisguiseScreen
           config={panicConfig}
-          onExitDisguise={() => setIsDisguiseActive(false)}
+          onExitDisguise={(unlocked = false) => {
+            setIsDisguiseActive(false);
+            setIsAppUnlocked(unlocked);
+          }}
         />
       )}
     </div>

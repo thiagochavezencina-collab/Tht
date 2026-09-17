@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Menu,
   ChevronDown,
@@ -25,15 +25,26 @@ export const PearsonView: React.FC<PearsonViewProps> = ({ onExit, onOpenTabSwitc
   const [goldExperienceOpen, setGoldExperienceOpen] = useState(false);
   const [otherOpen, setOtherOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [liveTime, setLiveTime] = useState('07:30');
+
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setLiveTime(`${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`);
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <div
       className="min-h-screen bg-[#f3f4f6] text-[#222222] flex flex-col font-sans select-none pb-16"
       style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif' }}
     >
-      {/* iOS Top Status Bar (Authentic 7:30 / 4G / 95%) */}
+      {/* iOS Top Status Bar (Authentic Live Time / 4G / 95%) */}
       <div className="bg-white px-5 pt-2 pb-1 flex items-center justify-between text-xs text-black border-b border-[#e1e4e8]">
-        <span className="font-semibold text-sm">7:30</span>
+        <span className="font-semibold text-sm">{liveTime}</span>
         <div className="flex items-center gap-1.5 text-xs font-semibold">
           <span className="text-[11px]">4G</span>
           <div className="flex items-end gap-0.5 h-3">

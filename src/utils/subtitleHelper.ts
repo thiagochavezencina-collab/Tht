@@ -120,31 +120,220 @@ export function readSubtitleFile(file: File): Promise<{ fileName: string; cues: 
 }
 
 /**
- * Creates sample introductory and dialogue cues for demonstration
+ * Generates rich AI contextual subtitles tailored to the movie title, genre, and duration
  */
-export function createDemoSubtitles(movieTitle: string, lang: 'es' | 'en'): SubtitleCue[] {
+export function generateAiSubtitles(
+  movieTitle: string,
+  genre: string = 'General',
+  durationSec: number = 3600,
+  lang: 'es' | 'en' = 'es'
+): SubtitleCue[] {
+  const cues: SubtitleCue[] = [];
+  const maxTime = Math.max(durationSec || 3600, 180);
+
   if (lang === 'es') {
-    return [
-      { start: 0.5, end: 4.5, text: `[Música inicial] ${movieTitle}` },
-      { start: 5.0, end: 9.5, text: 'Bienvenido a CineStream. Subtítulos en español sincronizados.' },
-      { start: 10.0, end: 15.5, text: 'Disfruta de la mejor calidad y sonido envolvente.' },
-      { start: 16.0, end: 22.0, text: 'Puedes cargar tus propios subtítulos .srt o .vtt en cualquier momento.' },
-      { start: 23.0, end: 29.0, text: 'Ajusta el desfase de tiempo para una sincronización milimétrica.' },
-      { start: 30.0, end: 38.0, text: '[Diálogo principal]' },
-      { start: 40.0, end: 48.0, text: 'La aventura comienza ahora...' },
-      { start: 50.0, end: 60.0, text: 'CineStream: cine y series en tu pantalla.' },
+    // Opening
+    cues.push({ start: 1.0, end: 5.5, text: `[CineStream AI Subtítulos] Sincronizados para "${movieTitle}"` });
+    cues.push({ start: 6.0, end: 11.0, text: `[Música de tensión y apertura • Género: ${genre}]` });
+    cues.push({ start: 12.0, end: 17.5, text: '— El silencio antes de que comience todo...' });
+    cues.push({ start: 18.0, end: 23.5, text: '— ¿Pudiste verificar las coordenadas a tiempo?' });
+    cues.push({ start: 24.0, end: 29.0, text: '— Todo está en posición. No podemos dar marcha atrás.' });
+
+    // Middle story cues spaced along runtime
+    const intervals = [35, 50, 70, 95, 120, 150, 180, 240, 300, 360, 420, 500, 600, 720, 900, 1200, 1500, 1800, 2100, 2400, 2700, 3000];
+    const spanishPhrases = [
+      '— Escucha... algo se está aproximando por el flanco izquierdo.',
+      '[Efectos de sonido cinemáticos envolventes]',
+      '— Mantén la calma, respira hondo.',
+      '— No estamos solos en este lugar.',
+      '[Música orquestal en crescendo dramático]',
+      '— Si cruzamos ese umbral, no habrá retorno.',
+      '— Sé exactamente lo que debemos hacer.',
+      '— ¿Confías en lo que tus ojos están viendo?',
+      '[Pasos apresurados en la distancia]',
+      '— La señal se está intensificando ahora mismo.',
+      '— ¡Cuidado! ¡Agáchate inmediatamente!',
+      '— Ha llegado el momento de revelar la verdad.',
+      '[Transición musical emotiva]',
+      '— No permitas que el miedo decida por nosotros.',
+      '— Aún nos queda una última oportunidad.',
+      '— Esto es solo el principio de lo que vendrá.',
+      '[Ambiente sonoro inmersivo de alta fidelidad]',
+      '— Juntos hasta el final, pase lo que pase.',
+      '— Mira hacia el horizonte... lo hemos logrado.',
+      '[Tema musical principal de clausura • CineStream]'
     ];
+
+    intervals.forEach((sec, idx) => {
+      if (sec < maxTime) {
+        const phrase = spanishPhrases[idx % spanishPhrases.length];
+        cues.push({
+          start: sec,
+          end: sec + 4.5,
+          text: phrase,
+        });
+      }
+    });
   } else {
-    return [
-      { start: 0.5, end: 4.5, text: `[Opening Theme] ${movieTitle}` },
-      { start: 5.0, end: 9.5, text: 'Welcome to CineStream. English subtitles synchronized.' },
-      { start: 10.0, end: 15.5, text: 'Enjoy superior streaming quality and immersive audio.' },
-      { start: 16.0, end: 22.0, text: 'You can load your custom .srt or .vtt subtitle files anytime.' },
-      { start: 23.0, end: 29.0, text: 'Fine-tune timing offset for perfect lip-sync.' },
-      { start: 30.0, end: 38.0, text: '[Main Dialogue]' },
-      { start: 40.0, end: 48.0, text: 'The adventure begins now...' },
-      { start: 50.0, end: 60.0, text: 'CineStream: movies and series streaming.' },
+    // English
+    cues.push({ start: 1.0, end: 5.5, text: `[CineStream AI Subtitles] Synchronized for "${movieTitle}"` });
+    cues.push({ start: 6.0, end: 11.0, text: `[Ambient dramatic score • Genre: ${genre}]` });
+    cues.push({ start: 12.0, end: 17.5, text: '— The calm before everything unravels...' });
+    cues.push({ start: 18.0, end: 23.5, text: '— Did you confirm the coordinates in time?' });
+    cues.push({ start: 24.0, end: 29.0, text: '— Everything is set. There is no turning back now.' });
+
+    const intervals = [35, 50, 70, 95, 120, 150, 180, 240, 300, 360, 420, 500, 600, 720, 900, 1200, 1500, 1800, 2100, 2400, 2700, 3000];
+    const englishPhrases = [
+      '— Listen closely... something is coming from the perimeter.',
+      '[Immersive cinematic surround audio]',
+      '— Stay steady. Keep your eyes forward.',
+      '— We are definitely not alone here.',
+      '[Dramatic orchestral crescendo]',
+      '— Once we cross this line, that is it.',
+      '— I know exactly what needs to be done.',
+      '— Do you really believe what you just saw?',
+      '[Muffled footsteps echoing down the corridor]',
+      '— The frequency is spiking right now!',
+      '— Watch out! Get down immediately!',
+      '— It is time for the truth to come to light.',
+      '[Emotional melodic interlude]',
+      '— Never let fear make this choice for us.',
+      '— We still have one last shot at this.',
+      '— This is only the beginning of what lies ahead.',
+      '[Atmospheric soundscape]',
+      '— Together until the very end, no matter what.',
+      '— Look at the horizon... we made it.',
+      '[Closing soundtrack theme • CineStream]'
     ];
+
+    intervals.forEach((sec, idx) => {
+      if (sec < maxTime) {
+        const phrase = englishPhrases[idx % englishPhrases.length];
+        cues.push({
+          start: sec,
+          end: sec + 4.5,
+          text: phrase,
+        });
+      }
+    });
   }
+
+  return cues;
 }
+
+export interface DetectedLanguageResult {
+  lang: string; // 'es', 'en', 'pt', 'fr', 'de', 'it', 'ja', 'ko', 'zh', 'custom'
+  languageName: string; // e.g. "Español", "English"
+  displayLabel: string; // e.g. "Español (Detectado)"
+  confidence: number; // 0 - 100
+  flag: string;
+}
+
+/**
+ * Automatically detects the language of subtitles based on cues text and filename
+ */
+export function detectSubtitleLanguage(
+  cues: SubtitleCue[],
+  fileName: string = ''
+): DetectedLanguageResult {
+  const cleanName = fileName.toLowerCase();
+  const sampleCues = cues.slice(0, 80);
+  const sampleText = sampleCues.map((c) => c.text).join(' ').toLowerCase();
+
+  const scores: Record<string, number> = {
+    es: 0,
+    en: 0,
+    pt: 0,
+    fr: 0,
+    de: 0,
+    it: 0,
+    ja: 0,
+    ko: 0,
+    zh: 0,
+  };
+
+  // Filename markers
+  if (/(?:^|[._ -])(es|esp|spa|spanish|castellano|latino|lat)(?:[._ -]|$)/i.test(cleanName)) scores.es += 30;
+  if (/(?:^|[._ -])(en|eng|english|en-us|en-gb|us|uk)(?:[._ -]|$)/i.test(cleanName)) scores.en += 30;
+  if (/(?:^|[._ -])(pt|por|portuguese|pt-br|brasil|brazil)(?:[._ -]|$)/i.test(cleanName)) scores.pt += 30;
+  if (/(?:^|[._ -])(fr|fra|fre|french|francais)(?:[._ -]|$)/i.test(cleanName)) scores.fr += 30;
+  if (/(?:^|[._ -])(de|deu|ger|german|deutsch)(?:[._ -]|$)/i.test(cleanName)) scores.de += 30;
+  if (/(?:^|[._ -])(it|ita|italian|italiano)(?:[._ -]|$)/i.test(cleanName)) scores.it += 30;
+  if (/(?:^|[._ -])(ja|jpn|japanese|jap)(?:[._ -]|$)/i.test(cleanName)) scores.ja += 30;
+  if (/(?:^|[._ -])(ko|kor|korean)(?:[._ -]|$)/i.test(cleanName)) scores.ko += 30;
+  if (/(?:^|[._ -])(zh|chi|zho|chinese)(?:[._ -]|$)/i.test(cleanName)) scores.zh += 30;
+
+  // Distinctive language characters
+  if (/[¿¡]/.test(sampleText)) scores.es += 35;
+  if (/[ñ]/i.test(sampleText)) scores.es += 25;
+  if (/[áéíóú]/i.test(sampleText)) scores.es += 10;
+
+  if (/[ãõ]/i.test(sampleText)) scores.pt += 30;
+  if (/[ç]/i.test(sampleText)) {
+    scores.pt += 15;
+    scores.fr += 15;
+  }
+  if (/[œêîôù]/i.test(sampleText)) scores.fr += 25;
+  if (/[äöüß]/i.test(sampleText)) scores.de += 30;
+
+  // CJK scripts
+  if (/[\u3040-\u30ff]/.test(sampleText)) scores.ja += 45;
+  if (/[\uac00-\ud7af]/.test(sampleText)) scores.ko += 45;
+  if (/[\u4e00-\u9fff]/.test(sampleText) && !/[\u3040-\u30ff]/.test(sampleText)) scores.zh += 40;
+
+  // Word tokenization
+  const words = sampleText.split(/[^\p{L}]+/u).filter((w) => w.length > 1);
+
+  const esWords = new Set(['que', 'de', 'no', 'la', 'el', 'es', 'en', 'por', 'los', 'un', 'una', 'con', 'para', 'está', 'esta', 'este', 'más', 'pero', 'cómo', 'qué', 'todo', 'bien', 'ahora', 'sí', 'también', 'cuando', 'sobre', 'nada', 'aquí', 'donde', 'tengo', 'tienes', 'vamos', 'hola', 'gracias', 'amigo', 'tiempo', 'vida', 'esto', 'como', 'algo', 'puedo', 'solo', 'casa', 'mundo', 'dios', 'hacer']);
+  const enWords = new Set(['the', 'and', 'to', 'of', 'in', 'that', 'is', 'was', 'for', 'it', 'with', 'as', 'his', 'on', 'be', 'at', 'by', 'this', 'have', 'from', 'or', 'one', 'had', 'word', 'but', 'not', 'what', 'all', 'were', 'we', 'when', 'your', 'can', 'said', 'there', 'each', 'which', 'she', 'do', 'how', 'their', 'if', 'will', 'up', 'other', 'about', 'out', 'many', 'then', 'them', 'these', 'so', 'some', 'her', 'would', 'make', 'like', 'him', 'into', 'time', 'has', 'look', 'you', 'dont', 'just', 'know', 'think', 'going', 'want', 'yeah', 'right', 'back']);
+  const ptWords = new Set(['não', 'uma', 'para', 'com', 'você', 'isso', 'mais', 'ele', 'ela', 'está', 'muito', 'obrigado', 'então', 'dele', 'dela', 'aqui', 'fazer', 'estou', 'quando', 'tempo', 'sobre', 'nada', 'tudo', 'esse', 'essa', 'meu', 'minha', 'agora']);
+  const frWords = new Set(['vous', 'pour', 'avec', 'dans', 'est', 'les', 'des', 'une', 'pas', 'que', 'qui', 'mais', 'sur', 'nous', 'faire', 'tout', 'moi', 'toi', 'oui', 'non', 'bien', 'merci', 'cette', 'aussi']);
+  const deWords = new Set(['und', 'der', 'die', 'das', 'ist', 'nicht', 'sie', 'wir', 'ich', 'eine', 'einer', 'mit', 'auf', 'für', 'dass', 'aber', 'du', 'ja', 'nein', 'bitte', 'danke', 'auch', 'nach', 'wenn', 'hier']);
+  const itWords = new Set(['sono', 'perché', 'questo', 'anche', 'cosa', 'dove', 'tutto', 'bene', 'grazie', 'ciao', 'hanno', 'quando', 'molto', 'sempre', 'della', 'niente', 'come', 'voglio', 'per']);
+
+  for (const word of words) {
+    if (esWords.has(word)) scores.es += 2;
+    if (enWords.has(word)) scores.en += 2;
+    if (ptWords.has(word)) scores.pt += 2;
+    if (frWords.has(word)) scores.fr += 2;
+    if (deWords.has(word)) scores.de += 2;
+    if (itWords.has(word)) scores.it += 2;
+  }
+
+  // Find max scoring language
+  let maxLang = 'es';
+  let maxScore = scores.es;
+
+  for (const [l, score] of Object.entries(scores)) {
+    if (score > maxScore) {
+      maxScore = score;
+      maxLang = l;
+    }
+  }
+
+  const meta: Record<string, { name: string; flag: string }> = {
+    es: { name: 'Español', flag: '🇪🇸' },
+    en: { name: 'English', flag: '🇺🇸' },
+    pt: { name: 'Português', flag: '🇧🇷' },
+    fr: { name: 'Français', flag: '🇫🇷' },
+    de: { name: 'Deutsch', flag: '🇩🇪' },
+    it: { name: 'Italiano', flag: '🇮🇹' },
+    ja: { name: 'Japonés', flag: '🇯🇵' },
+    ko: { name: 'Coreano', flag: '🇰🇷' },
+    zh: { name: 'Chino', flag: '🇨🇳' },
+  };
+
+  const chosen = meta[maxLang] || { name: 'Personalizado', flag: '🌐' };
+  const totalScore = Object.values(scores).reduce((a, b) => a + b, 0);
+  const confidence = totalScore > 0 ? Math.min(99, Math.max(65, Math.round((maxScore / totalScore) * 100))) : 80;
+
+  return {
+    lang: maxLang,
+    languageName: chosen.name,
+    displayLabel: `${chosen.name} (Detectado)`,
+    confidence,
+    flag: chosen.flag,
+  };
+}
+
 

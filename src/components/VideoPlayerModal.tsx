@@ -40,6 +40,7 @@ import { parseVideoSource } from '../utils/videoHelper';
 import { saveVideoBlob, resolvePlayableVideoUrl } from '../utils/videoStorage';
 import { updateMovieInFirestore } from '../firestoreService';
 import { SubtitleModal, SubtitleConfig } from './SubtitleModal';
+import { readSubtitleFile, generateAiSubtitles, detectSubtitleLanguage } from '../utils/subtitleHelper';
 import { useMobileControlLogic } from '../hooks/useMobileControlLogic';
 
 // Helper: Format seconds to MM:SS or HH:MM:SS
@@ -120,6 +121,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     let isCancelled = false;
     setHasEnded(false);
     setCurrentTime(0);
+    setForceEmbedMode(false);
 
     resolvePlayableVideoUrl(activeEpisodeId, rawVideoUrl || '').then((liveUrl) => {
       if (!isCancelled) {
@@ -147,16 +149,13 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   }, [activeEpisodeId, rawVideoUrl, movie.hasLocalFile, movie.fileName]);
 
   // Source detection
+  const [forceEmbedMode, setForceEmbedMode] = useState(false);
   const parsedSource = parseVideoSource(playableVideoUrl);
-  // Embed platforms: YouTube, Vimeo, Google Drive, DailyMotion, or raw iframe embeds
-  const isEmbedSource =
-    parsedSource.type === 'youtube' ||
-    parsedSource.type === 'vimeo' ||
-    parsedSource.type === 'googledrive' ||
-    parsedSource.type === 'dailymotion' ||
-    parsedSource.type === 'embed';
+  // Embed platforms: YouTube, Vimeo, Google Drive, DailyMotion, Archive, OK.ru, Streamtape, or web video embeds
+  const isEmbedSource = parsedSource.type !== 'direct';
   const isGoogleDrive = parsedSource.type === 'googledrive';
-  const isUsingEmbed = isEmbedSource;
+  const isUsingEmbed = isEmbedSource || forceEmbedMode;
+  const embedIframeSrc = parsedSource.embedUrl || parsedSource.directUrl || playableVideoUrl;
 
   const [currentTime, setCurrentTime] = useState(initialTime);
   const [duration, setDuration] = useState(0);
@@ -195,12 +194,71 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   });
   const [customTracks, setCustomTracks] = useState<SubtitleTrack[]>([]);
   const [isSubtitleModalOpen, setIsSubtitleModalOpen] = useState(false);
+  const subFileInputRef = useRef<HTMLInputElement>(null);
 
   const availableTracks = useMemo<SubtitleTrack[]>(() => {
     const movieTracks = movie.subtitles || [];
     const episodeTracks = activeEpisode?.subtitles || [];
     return [...movieTracks, ...episodeTracks, ...customTracks];
   }, [movie.subtitles, activeEpisode, customTracks]);
+
+  // Handle local VTT or SRT file selection and synchronization
+  const handleLocalSubtitleFilePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const { fileName, cues } = await readSubtitleFile(file);
+      if (cues.length === 0) {
+        setResumeToast('El archivo no contiene subtítulos o marcas de tiempo válidas (.srt o .vtt)');
+        return;
+      }
+
+      const detected = detectSubtitleLanguage(cues, fileName);
+      const cleanName = fileName.replace(/\.[^/.]+$/, '');
+      const newTrack: SubtitleTrack = {
+        id: `local-file-${Date.now()}`,
+        lang: detected.lang,
+        label: `${cleanName} [${detected.flag} ${detected.languageName}]`,
+        fileName,
+        cues,
+      };
+
+      setCustomTracks((prev) => [...prev, newTrack]);
+      setSubtitleConfig((prev) => ({
+        ...prev,
+        trackId: newTrack.id,
+      }));
+      setResumeToast(
+        `✨ Idioma detectado: ${detected.flag} ${detected.languageName} (${detected.confidence}%). Pista asignada automáticamente (${cues.length} líneas).`
+      );
+      setShowSubtitlesMenu(false);
+    } catch (err: any) {
+      setResumeToast(err?.message || 'Error al procesar archivo de subtítulos');
+    } finally {
+      if (subFileInputRef.current) subFileInputRef.current.value = '';
+    }
+  };
+
+  // Generate AI contextual subtitles
+  const handleGenerateAiSubtitlesDirectly = (lang: 'es' | 'en' = 'es') => {
+    const videoDuration = duration || 5400;
+    const cues = generateAiSubtitles(activeDisplayTitle, movie.genre, videoDuration, lang);
+    const aiTrack: SubtitleTrack = {
+      id: `ai-direct-${lang}-${Date.now()}`,
+      lang,
+      label: lang === 'es' ? 'Español (Generado con IA)' : 'English (AI Generated)',
+      cues,
+    };
+
+    setCustomTracks((prev) => [...prev, aiTrack]);
+    setSubtitleConfig((prev) => ({
+      ...prev,
+      trackId: aiTrack.id,
+    }));
+    setResumeToast(`✨ Subtítulos IA activados y sincronizados (${cues.length} líneas)`);
+    setShowSubtitlesMenu(false);
+  };
 
   const [currentSubtitleText, setCurrentSubtitleText] = useState<string>('');
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -813,13 +871,14 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             : 'h-full sm:h-auto max-w-6xl aspect-video sm:max-h-[85vh] rounded-none sm:rounded-2xl border-0 sm:border border-zinc-800/80 shadow-rose-950/20'
         }`}
       >
-        {/* RENDER CASE 1: External Platform Embed (YouTube, Vimeo, Google Drive, Dailymotion) */}
+        {/* RENDER CASE 1: External Platform Embed (YouTube, Vimeo, Google Drive, DailyMotion, Archive, OK.ru, Streamtape, web players) */}
         {isUsingEmbed ? (
           <div className="w-full h-full bg-black relative flex items-center justify-center">
             <iframe
               ref={iframeRef}
-              src={parsedSource.embedUrl || playableVideoUrl}
-              title={activeDisplayTitle}
+              src={embedIframeSrc}
+              title="Visor de contenido integrado"
+              referrerPolicy="no-referrer"
               className={`w-full h-full border-0 bg-black ${
                 mobileLogic.embedFitMode === 'cover' ? 'scale-105 object-cover' : 'object-contain'
               }`}
@@ -852,6 +911,17 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               </button>
 
               <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2">
+                {forceEmbedMode && (
+                  <button
+                    onClick={() => setForceEmbedMode(false)}
+                    className="flex items-center gap-1 px-3 py-2 rounded-full bg-zinc-900/90 hover:bg-zinc-800 text-zinc-200 text-xs font-semibold backdrop-blur-md border border-zinc-700/60 shadow-xl active:scale-95 cursor-pointer min-h-[40px]"
+                    title="Volver al reproductor nativo"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
+                    <span className="hidden sm:inline">Modo Nativo</span>
+                  </button>
+                )}
+
                 {isGoogleDrive && (
                   <>
                     <button
@@ -868,7 +938,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                       target="_blank"
                       rel="noreferrer"
                       className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs backdrop-blur-md shadow-2xl active:scale-95 cursor-pointer min-h-[40px] border border-amber-300/50"
-                      title="Abrir en Google Drive (Reproductor nativo de iOS con AirPlay y rotación)"
+                      title="Abrir en Google Drive"
                     >
                       <ExternalLink className="w-4 h-4 text-black" />
                       <span>Abrir en Drive</span>
@@ -1120,14 +1190,27 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                         <li><strong>Reproductor del sistema:</strong> Puedes abrirlo directamente con el botón de abajo en el reproductor de tu teléfono (VLC, Chrome, QuickTime).</li>
                       </ul>
                       <div className="pt-1 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setForceEmbedMode(true);
+                            setHasVideoError(false);
+                            setErrorMessage('');
+                          }}
+                          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs shadow-md active:scale-95 transition-all cursor-pointer"
+                        >
+                          <MonitorPlay className="w-4 h-4 text-black" />
+                          <span>Reproducir como Visor Web Integrado (Iframe)</span>
+                        </button>
+
                         <a
                           href={playableVideoUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] transition-colors"
+                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold transition-colors"
                         >
                           <ExternalLink className="w-3.5 h-3.5" />
-                          <span>Abrir enlace directo en el celular</span>
+                          <span>Abrir en pestaña nueva</span>
                         </a>
                       </div>
                     </div>
@@ -1832,21 +1915,54 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                         </button>
                       ))}
 
-                      <div className="pt-1.5 mt-1.5 border-t border-zinc-800">
+                      <div className="pt-1.5 mt-1.5 border-t border-zinc-800 space-y-1">
+                        <button
+                          onClick={() => {
+                            setShowSubtitlesMenu(false);
+                            subFileInputRef.current?.click();
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-950/40 hover:text-rose-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>Cargar archivo .SRT o .VTT</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleGenerateAiSubtitlesDirectly('es')}
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-amber-400 hover:bg-amber-950/40 hover:text-amber-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>Generar subtítulos con IA</span>
+                        </button>
+
                         <button
                           onClick={() => {
                             setShowSubtitlesMenu(false);
                             setIsSubtitleModalOpen(true);
                           }}
-                          className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-950/40 hover:text-rose-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 flex items-center gap-1.5 transition-colors cursor-pointer"
                         >
                           <SlidersHorizontal className="w-3.5 h-3.5" />
-                          <span>Ajustes / Subir .SRT</span>
+                          <span>Ajustes & Sincronización</span>
                         </button>
                       </div>
                     </div>
                   )}
                 </div>
+
+                {/* Switch to in-browser web player mode */}
+                {playableVideoUrl && !playableVideoUrl.includes('blob:') && (
+                  <button
+                    onClick={() => {
+                      setForceEmbedMode(true);
+                      setIsPlaying(false);
+                    }}
+                    className="p-1.5 sm:p-2 rounded-xl text-zinc-300 hover:text-amber-300 hover:bg-zinc-800 transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center cursor-pointer"
+                    title="Reproducir en visor integrado (Iframe)"
+                  >
+                    <MonitorPlay className="w-4 h-4" />
+                  </button>
+                )}
 
                 {/* Theater Mode Toggle (Desktop only) */}
                 <button
@@ -2009,6 +2125,30 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                         <span>Ajustes & Subir .SRT</span>
                       </button>
                     </div>
+
+                    <div className="flex gap-2 mb-2">
+                      <button
+                        onClick={() => {
+                          setShowMobileSettingsModal(false);
+                          subFileInputRef.current?.click();
+                        }}
+                        className="flex-1 py-2 px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-xs font-semibold text-rose-400 border border-zinc-700 flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Subir .SRT/.VTT</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowMobileSettingsModal(false);
+                          handleGenerateAiSubtitlesDirectly('es');
+                        }}
+                        className="flex-1 py-2 px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-xs font-semibold text-amber-400 border border-zinc-700 flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Subtítulos IA</span>
+                      </button>
+                    </div>
+
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         onClick={() => setSubtitleConfig({ ...subtitleConfig, trackId: 'off' })}
@@ -2102,6 +2242,15 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           onAddCustomTrack={(newTrack) => {
             setCustomTracks((prev) => [...prev, newTrack]);
           }}
+        />
+
+        {/* Hidden Local Subtitle File Picker (.srt / .vtt) */}
+        <input
+          ref={subFileInputRef}
+          type="file"
+          accept=".srt,.vtt,.txt"
+          className="hidden"
+          onChange={handleLocalSubtitleFilePick}
         />
       </div>
 

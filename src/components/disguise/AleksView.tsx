@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Menu,
   Bell,
@@ -29,6 +29,17 @@ export const AleksView: React.FC<AleksViewProps> = ({ onExit, onOpenTabSwitcher 
   >('inicio');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [liveTime, setLiveTime] = useState('07:30');
+
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setLiveTime(`${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`);
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Table inputs for function g(x) = 5x - 5
   const [inputs, setInputs] = useState<{ [key: string]: string }>({
@@ -45,9 +56,9 @@ export const AleksView: React.FC<AleksViewProps> = ({ onExit, onOpenTabSwitcher 
       className="min-h-screen bg-[#edf0f5] text-[#222222] flex flex-col font-sans select-none pb-16"
       style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif' }}
     >
-      {/* iOS Top Status Bar (Authentic 7:30 / 4G / 95%) */}
+      {/* iOS Top Status Bar (Authentic Live Time / 4G / 95%) */}
       <div className="bg-white px-5 pt-2 pb-1 flex items-center justify-between text-xs text-black border-b border-[#e1e4e8]">
-        <span className="font-semibold text-sm">7:30</span>
+        <span className="font-semibold text-sm">{liveTime}</span>
         <div className="flex items-center gap-1.5 text-xs font-semibold">
           <span className="text-[11px]">4G</span>
           <div className="flex items-end gap-0.5 h-3">
@@ -99,14 +110,14 @@ export const AleksView: React.FC<AleksViewProps> = ({ onExit, onOpenTabSwitcher 
               onClick={() => setUserMenuOpen(!userMenuOpen)}
               className="flex items-center gap-1 text-xs font-bold text-[#333333] bg-white hover:bg-slate-50 px-2 py-1 border border-[#d0d5dd] rounded-xs"
             >
-              <span>¡Hola, Thiago...</span>
+              <span>¡Hola, Estudiante...</span>
               <span className="text-[10px]">▼</span>
             </button>
 
             {userMenuOpen && (
               <div className="absolute right-0 top-full mt-1 w-52 bg-white border border-[#c2c8d0] shadow-md py-1 z-50 text-xs">
                 <div className="px-3 py-2 border-b border-slate-100 font-bold text-slate-800">
-                  Thiago Chavez Encina
+                  Estudiante
                   <span className="block font-normal text-slate-500 text-[11px]">ID de estudiante: 928371</span>
                 </div>
                 <button
@@ -359,7 +370,7 @@ export const AleksView: React.FC<AleksViewProps> = ({ onExit, onOpenTabSwitcher 
                 ))}
               </div>
               <span>0/5</span>
-              <span className="ml-2 font-normal text-slate-200">Thiago ▼</span>
+              <span className="ml-2 font-normal text-slate-200">Estudiante ▼</span>
             </div>
           </div>
 

@@ -79,7 +79,7 @@ export interface MovieSuggestion {
   year?: number;
   reason?: string;
   suggestedBy: string; // "Anónimo" for public display
-  senderDetails?: string; // Private sender info / device details only visible to the admin (Thiago)
+  senderDetails?: string; // Private sender info / device details only visible to the admin
   isAnonymous?: boolean;
   userAvatar?: string;
   votes: number;

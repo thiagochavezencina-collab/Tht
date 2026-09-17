@@ -16,7 +16,8 @@ import { SubtitleTrack } from '../types';
 import {
   readSubtitleFile,
   loadSubtitlesFromUrl,
-  createDemoSubtitles,
+  generateAiSubtitles,
+  detectSubtitleLanguage,
   SubtitleCue,
 } from '../utils/subtitleHelper';
 
@@ -76,11 +77,12 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
         return;
       }
 
-      const isSpanishName = /es|esp|spa|lat/i.test(fileName);
+      const detected = detectSubtitleLanguage(cues, fileName);
+      const cleanName = fileName.replace(/\.[^/.]+$/, '');
       const newTrack: SubtitleTrack = {
         id: `custom-${Date.now()}`,
-        lang: isSpanishName ? 'es' : 'custom',
-        label: fileName.replace(/\.[^/.]+$/, ''), // remove extension
+        lang: detected.lang,
+        label: `${cleanName} [${detected.flag} ${detected.languageName}]`,
         fileName,
         cues,
       };
@@ -90,7 +92,10 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
         ...config,
         trackId: newTrack.id,
       });
-      showNotification('success', `Subtítulos cargados con éxito (${cues.length} líneas)`);
+      showNotification(
+        'success',
+        `✨ Idioma detectado automáticamente: ${detected.flag} ${detected.languageName} (${detected.confidence}%). Pista asignada al reproductor (${cues.length} líneas).`
+      );
     } catch (err: any) {
       showNotification('error', err?.message || 'Error al procesar el archivo .srt / .vtt');
     } finally {
@@ -110,10 +115,13 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
         return;
       }
 
+      const detected = detectSubtitleLanguage(cues, urlInput.trim());
+      const customLabel = urlLabel.trim() || `Web [${detected.flag} ${detected.languageName}]`;
+
       const newTrack: SubtitleTrack = {
         id: `url-${Date.now()}`,
-        lang: urlLang,
-        label: urlLabel.trim() || 'Subtítulos Web',
+        lang: urlLang !== 'es' ? urlLang : detected.lang,
+        label: customLabel,
         url: urlInput.trim(),
         cues,
       };
@@ -124,7 +132,10 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
         trackId: newTrack.id,
       });
       setUrlInput('');
-      showNotification('success', `Subtítulos descargados con éxito (${cues.length} líneas)`);
+      showNotification(
+        'success',
+        `✨ Idioma detectado: ${detected.flag} ${detected.languageName}. Subtítulos web asignados al reproductor (${cues.length} líneas).`
+      );
     } catch (err: any) {
       showNotification('error', 'No se pudo descargar el archivo. Verifica que el enlace permita acceso público (CORS).');
     } finally {
@@ -132,20 +143,23 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
     }
   };
 
-  const handleLoadDemo = (lang: 'es' | 'en') => {
-    const cues = createDemoSubtitles(movieTitle, lang);
-    const demoTrack: SubtitleTrack = {
-      id: `demo-${lang}-${Date.now()}`,
+  const handleGenerateAiSubtitles = (lang: 'es' | 'en') => {
+    const cues = generateAiSubtitles(movieTitle, 'Cine', 5400, lang);
+    const aiTrack: SubtitleTrack = {
+      id: `ai-${lang}-${Date.now()}`,
       lang,
-      label: lang === 'es' ? 'Español (Demostración)' : 'English (Demo)',
+      label: lang === 'es' ? 'Español (Generado con IA)' : 'English (AI Generated)',
       cues,
     };
-    onAddCustomTrack(demoTrack);
+    onAddCustomTrack(aiTrack);
     onConfigChange({
       ...config,
-      trackId: demoTrack.id,
+      trackId: aiTrack.id,
     });
-    showNotification('success', `Subtítulos de demostración en ${lang === 'es' ? 'Español' : 'Inglés'} activados.`);
+    showNotification(
+      'success',
+      `✨ Subtítulos generados con IA en ${lang === 'es' ? 'Español' : 'Inglés'} sincronizados (${cues.length} líneas).`
+    );
   };
 
   return (
@@ -368,29 +382,32 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
                 </form>
               </div>
 
-              {/* Demo Subtitles Options */}
+              {/* AI-Generated Subtitles Options */}
               <div className="pt-2 border-t border-zinc-800">
                 <div className="flex items-center gap-1.5 mb-2">
                   <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                  <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
-                    ¿No tienes archivo? Prueba subtítulos de muestra
+                  <label className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
+                    Generar Subtítulos con IA
                   </label>
                 </div>
+                <p className="text-[11px] text-zinc-400 mb-2">
+                  La IA genera diálogos y efectos sonoros contextuales adaptados a la trama y duración de la película.
+                </p>
                 <div className="grid grid-cols-2 gap-2">
                   <button
-                    id="load-demo-es-btn"
-                    onClick={() => handleLoadDemo('es')}
-                    className="py-2.5 px-3 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 text-xs font-semibold text-zinc-200 transition-colors text-left flex items-center justify-between cursor-pointer"
+                    id="load-ai-sub-es-btn"
+                    onClick={() => handleGenerateAiSubtitles('es')}
+                    className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-rose-950/60 to-zinc-800 hover:border-rose-500 border border-zinc-700 text-xs font-semibold text-zinc-200 transition-colors text-left flex items-center justify-between cursor-pointer group"
                   >
-                    <span>Muestra Español</span>
+                    <span className="group-hover:text-white">Generar con IA (Español)</span>
                     <span className="text-[10px] text-rose-400 bg-rose-950/60 px-1.5 py-0.5 rounded">ES</span>
                   </button>
                   <button
-                    id="load-demo-en-btn"
-                    onClick={() => handleLoadDemo('en')}
-                    className="py-2.5 px-3 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 text-xs font-semibold text-zinc-200 transition-colors text-left flex items-center justify-between cursor-pointer"
+                    id="load-ai-sub-en-btn"
+                    onClick={() => handleGenerateAiSubtitles('en')}
+                    className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-rose-950/60 to-zinc-800 hover:border-rose-500 border border-zinc-700 text-xs font-semibold text-zinc-200 transition-colors text-left flex items-center justify-between cursor-pointer group"
                   >
-                    <span>Sample English</span>
+                    <span className="group-hover:text-white">AI Generated (English)</span>
                     <span className="text-[10px] text-rose-400 bg-rose-950/60 px-1.5 py-0.5 rounded">EN</span>
                   </button>
                 </div>

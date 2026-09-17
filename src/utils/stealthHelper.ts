@@ -19,6 +19,8 @@ const getFaviconSvgDataUri = (platform: string): string => {
     svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0284c7"/><path d="M22 16 L36 16 C43 16 47 20 47 26 C47 32 43 36 36 36 L30 36 L30 48 L22 48 Z M30 23 L30 29 L35 29 C38 29 40 28 40 26 C40 24 38 23 35 23 Z" fill="#ffffff"/></svg>`;
   } else if (platform === 'beeverso') {
     svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#059669"/><path d="M20 18 L30 18 C36 18 40 21 40 25 C40 28 38 30 34 31 C39 32 42 35 42 39 C42 44 37 47 30 47 L20 47 Z M28 24 L28 29 L30 29 C33 29 34 28 34 26 C34 25 33 24 30 24 Z M28 35 L28 41 L31 41 C34 41 35 40 35 38 C35 36 34 35 31 35 Z" fill="#ffffff"/></svg>`;
+  } else if (platform === 'classroom') {
+    svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#137333"/><rect x="14" y="14" width="36" height="36" rx="8" fill="#f9ab00"/><rect x="18" y="18" width="28" height="28" rx="6" fill="#137333"/><circle cx="32" cy="27" r="4" fill="#ffffff"/><path d="M24 40 C24 35 27 33 32 33 C37 33 40 35 40 40 Z" fill="#ffffff"/></svg>`;
   } else {
     svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#16a34a"/><rect x="18" y="22" width="28" height="20" rx="4" fill="#ffffff"/><circle cx="32" cy="32" r="4" fill="#16a34a"/></svg>`;
   }

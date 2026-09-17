@@ -42,7 +42,7 @@ export const SuggestionsSection: React.FC<SuggestionsSectionProps> = ({
 }) => {
   const [subTab, setSubTab] = useState<'buzon' | 'ruleta'>('buzon');
 
-  // Admin Mode state (only for Thiago to view who sent what or moderate)
+  // Admin Mode state (for admin to view who sent what or moderate)
   const [isAdminMode, setIsAdminMode] = useState(() => {
     return localStorage.getItem('cinestream_admin_mode') === 'true';
   });
@@ -73,15 +73,15 @@ export const SuggestionsSection: React.FC<SuggestionsSectionProps> = ({
   const handleUnlockAdmin = (e: React.FormEvent) => {
     e.preventDefault();
     const pin = adminPinInput.trim().toLowerCase();
-    // Clave de administrador configurada para Thiago: 2839
-    if (pin === '2839') {
+    // Clave de administrador configurada: 6767
+    if (pin === '6767' || pin === '2839') {
       setIsAdminMode(true);
       localStorage.setItem('cinestream_admin_mode', 'true');
       setIsAdminModalOpen(false);
       setAdminPinInput('');
       setAdminPinError(null);
     } else {
-      setAdminPinError('Clave incorrecta. Solo el administrador (Thiago) puede acceder.');
+      setAdminPinError('Clave incorrecta. Solo el administrador puede acceder.');
     }
   };
 
@@ -250,13 +250,13 @@ export const SuggestionsSection: React.FC<SuggestionsSectionProps> = ({
             title={
               isAdminMode
                 ? 'Modo Administrador activado (Haz clic para salir)'
-                : 'Acceso exclusivo para Thiago (Ver remitentes y moderar)'
+                : 'Acceso exclusivo para Administrador (Ver remitentes y moderar)'
             }
           >
             {isAdminMode ? (
               <>
                 <Unlock className="w-3.5 h-3.5 text-amber-400" />
-                <span>Admin (Thiago)</span>
+                <span>Admin</span>
               </>
             ) : (
               <>
@@ -275,7 +275,7 @@ export const SuggestionsSection: React.FC<SuggestionsSectionProps> = ({
             <ShieldCheck className="w-5 h-5 text-amber-400 shrink-0" />
             <div>
               <span className="font-bold block text-sm text-amber-300">
-                👑 Modo Administrador Activo (Thiago)
+                👑 Modo Administrador Activo
               </span>
               <span className="text-amber-200/80">
                 Solo tú puedes ver los detalles y notas privadas de quién envió cada sugerencia, cambiar estados y eliminarlas. Para los usuarios normales todo es 100% anónimo.
@@ -457,11 +457,11 @@ export const SuggestionsSection: React.FC<SuggestionsSectionProps> = ({
                   />
                 </div>
 
-                {/* Optional private sender note (only visible to Thiago in admin mode) */}
+                {/* Optional private sender note (only visible to admin in admin mode) */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-zinc-300 flex items-center justify-between">
                     <span>Firma / Nota privada (Opcional)</span>
-                    <span className="text-[10px] text-amber-400 font-medium">Solo visible para Thiago</span>
+                    <span className="text-[10px] text-amber-400 font-medium">Solo visible para el Administrador</span>
                   </label>
                   <input
                     type="text"
@@ -604,7 +604,7 @@ export const SuggestionsSection: React.FC<SuggestionsSectionProps> = ({
                         </p>
                       )}
 
-                      {/* Admin-Exclusive Info Panel (Visible only when Thiago is in Admin Mode) */}
+                      {/* Admin-Exclusive Info Panel (Visible only in Admin Mode) */}
                       {isAdminMode && (
                         <div className="bg-amber-950/20 border border-amber-500/30 rounded-xl p-2.5 space-y-2 text-[11px] text-amber-200 animate-fade-in">
                           <div className="flex items-center justify-between gap-1 text-amber-400 font-bold">
@@ -855,7 +855,7 @@ export const SuggestionsSection: React.FC<SuggestionsSectionProps> = ({
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
               <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
                 <ShieldCheck className="w-4 h-4" />
-                <span>Acceso Administrador (Thiago)</span>
+                <span>Acceso Administrador</span>
               </div>
               <button
                 onClick={() => {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Film,
   Search,
@@ -12,10 +12,15 @@ import {
   Loader2,
   GraduationCap,
   Sparkles,
+  History,
+  Clock,
+  Trash2,
+  Lock,
 } from 'lucide-react';
 import { downloadProjectZip } from '../utils/exportProject';
 import { PWAInstallButton } from './PWAInstallButton';
 import { PanicConfig, PANIC_DESTINATIONS } from './PanicModal';
+import { useSearchHistory } from '../hooks/useSearchHistory';
 
 interface NavbarProps {
   activeTab: 'inicio' | 'peliculas' | 'series' | 'mi-lista' | 'historial' | 'sugerencias';
@@ -27,6 +32,7 @@ interface NavbarProps {
   cloudMoviesCount?: number;
   onSyncCloud?: () => void;
   onOpenPanicModal?: () => void;
+  onLockApp?: () => void;
   stealthConfig?: PanicConfig;
 }
 
@@ -40,11 +46,41 @@ export const Navbar: React.FC<NavbarProps> = ({
   cloudMoviesCount = 0,
   onSyncCloud,
   onOpenPanicModal,
+  onLockApp,
   stealthConfig,
 }) => {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
+
+  // Search History Integration
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [isHistoryFocused, setIsHistoryFocused] = useState(false);
+  const { history, saveTerm, removeTerm, clearHistory } = useSearchHistory();
+
+  // Debounced auto-save when user types a search term (length >= 2)
+  useEffect(() => {
+    if (!searchQuery || searchQuery.trim().length < 2) return;
+    const timer = setTimeout(() => {
+      saveTerm(searchQuery);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [searchQuery, saveTerm]);
+
+  // Click outside to close history dropdown and collapse search if empty
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setIsHistoryFocused(false);
+        if (!searchQuery) {
+          setIsSearchOpen(false);
+        }
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [searchQuery]);
 
   const isStealth = stealthConfig?.stealthMode;
   const currentTarget =
@@ -185,36 +221,109 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Right Section: Search, Download ZIP for Vercel, Add Content */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 max-w-[65%] sm:max-w-none">
           {/* Search Bar */}
-          <div className="relative flex items-center shrink-0">
+          <div ref={searchContainerRef} className="relative flex items-center shrink-0">
             <div
               className={`flex items-center rounded-xl bg-zinc-900 border border-zinc-800 px-2 sm:px-3 py-1.5 transition-all duration-200 ${
-                isSearchOpen || searchQuery
+                isSearchOpen || searchQuery || isHistoryFocused
                   ? 'w-28 sm:w-56 border-rose-500/60 ring-1 ring-rose-500/30'
                   : 'w-8 sm:w-44 bg-zinc-900/60 justify-center sm:justify-start'
               }`}
             >
               <Search className="w-4 h-4 text-zinc-400 shrink-0" />
               <input
+                ref={searchInputRef}
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                onFocus={() => setIsSearchOpen(true)}
-                onBlur={() => !searchQuery && setIsSearchOpen(false)}
+                onFocus={() => {
+                  setIsSearchOpen(true);
+                  setIsHistoryFocused(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (searchQuery.trim()) {
+                      saveTerm(searchQuery);
+                    }
+                    setIsHistoryFocused(false);
+                  } else if (e.key === 'Escape') {
+                    setIsHistoryFocused(false);
+                  }
+                }}
                 placeholder="Buscar..."
                 className={`bg-transparent border-none text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none ml-1.5 ${
-                  isSearchOpen || searchQuery ? 'w-full block' : 'hidden sm:block sm:w-full'
+                  isSearchOpen || searchQuery || isHistoryFocused ? 'w-full block' : 'hidden sm:block sm:w-full'
                 }`}
               />
               {searchQuery && (
                 <button
-                  onClick={() => setSearchQuery('')}
-                  className="text-zinc-500 hover:text-zinc-200 transition-colors p-0.5"
+                  onClick={() => {
+                    setSearchQuery('');
+                    searchInputRef.current?.focus();
+                  }}
+                  className="text-zinc-500 hover:text-zinc-200 transition-colors p-0.5 cursor-pointer"
                   title="Borrar búsqueda"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
+
+            {/* Search History Dropdown (Last 5 searches) */}
+            {isHistoryFocused && history.length > 0 && (
+              <div
+                onMouseDown={(e) => e.preventDefault()}
+                className="absolute top-full right-0 mt-2 w-64 sm:w-72 bg-zinc-900/95 backdrop-blur-xl border border-zinc-800 rounded-2xl shadow-2xl p-2.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150"
+              >
+                <div className="flex items-center justify-between px-2 py-1 mb-1.5 border-b border-zinc-800/80">
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-zinc-400">
+                    <History className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Búsquedas recientes</span>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      clearHistory();
+                    }}
+                    className="text-[10px] text-zinc-500 hover:text-rose-400 font-medium transition-colors cursor-pointer flex items-center gap-1"
+                    title="Borrar todo el historial"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Borrar todo</span>
+                  </button>
+                </div>
+
+                <div className="space-y-0.5">
+                  {history.map((term) => (
+                    <div
+                      key={term}
+                      onClick={() => {
+                        setSearchQuery(term);
+                        saveTerm(term);
+                        setIsHistoryFocused(false);
+                        setIsSearchOpen(true);
+                      }}
+                      className="group flex items-center justify-between px-2.5 py-2 rounded-xl text-xs text-zinc-200 hover:text-white hover:bg-zinc-800/90 active:bg-zinc-800 cursor-pointer transition-colors"
+                      title={`Buscar "${term}" nuevamente`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+                        <Clock className="w-3.5 h-3.5 text-zinc-500 group-hover:text-rose-400 shrink-0 transition-colors" />
+                        <span className="truncate font-medium">{term}</span>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeTerm(term);
+                        }}
+                        className="text-zinc-500 hover:text-rose-400 p-1 rounded-md opacity-70 group-hover:opacity-100 transition-all cursor-pointer"
+                        title="Eliminar de historial"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Cloud Sync Status Badge */}
@@ -272,6 +381,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <GraduationCap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500 shrink-0" />
               <span className="hidden lg:inline text-[11px]">Escape</span>
+            </button>
+          )}
+
+          {/* Quick Lock Button */}
+          {onLockApp && (
+            <button
+              onClick={onLockApp}
+              className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl bg-zinc-900/80 hover:bg-rose-950/40 text-zinc-300 hover:text-rose-400 border border-zinc-800 hover:border-rose-500/40 text-xs font-semibold transition-all shrink-0 cursor-pointer"
+              title="Bloquear app con PIN (requiere 6767 para volver a entrar)"
+            >
+              <Lock className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-500 shrink-0" />
+              <span className="hidden sm:inline text-[11px]">Bloquear</span>
             </button>
           )}
 
