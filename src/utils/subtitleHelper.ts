@@ -153,6 +153,13 @@ export function parseSrtOrVtt(content: string): SubtitleCue[] {
 
   const commitCue = () => {
     if (currentStart >= 0 && currentEnd >= 0 && currentTextLines.length > 0) {
+      // If the last line in currentTextLines is just a standalone cue number for the next cue, pop it
+      while (
+        currentTextLines.length > 1 &&
+        /^\d+$/.test(currentTextLines[currentTextLines.length - 1].trim())
+      ) {
+        currentTextLines.pop();
+      }
       const rawText = currentTextLines.join('\n');
       const text = cleanSubtitleText(rawText);
       let end = currentEnd;
@@ -304,32 +311,69 @@ export async function loadSubtitlesFromUrl(url: string): Promise<SubtitleCue[]> 
 }
 
 /**
- * Reads a File (.srt, .vtt, .ass, .sub, .txt) uploaded from user device and returns parsed cues
+ * Reads a File (.srt, .vtt, .ass, .sub, .txt) uploaded from user device and returns parsed cues.
+ * Bulletproof multi-stage fallback designed for Android, iOS Safari, Windows, and Mac.
  */
 export async function readSubtitleFile(file: File): Promise<{ fileName: string; cues: SubtitleCue[] }> {
   let content = '';
+
+  // Stage 1: Native file.arrayBuffer()
   try {
     if (typeof file.arrayBuffer === 'function') {
       const buffer = await file.arrayBuffer();
       content = decodeSubtitleBuffer(buffer);
-    } else {
-      content = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve((e.target?.result as string) || '');
-        reader.onerror = () => reject(new Error('No se pudo leer el archivo de subtítulos'));
-        reader.readAsText(file, 'utf-8');
-      });
     }
-  } catch {
-    content = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve((e.target?.result as string) || '');
-      reader.onerror = () => reject(new Error('No se pudo leer el archivo de subtítulos'));
-      reader.readAsText(file, 'utf-8');
-    });
+  } catch (err) {
+    console.warn('file.arrayBuffer fallback triggered:', err);
   }
 
-  const cues = parseSrtOrVtt(content);
+  // Stage 2: FileReader readAsArrayBuffer
+  if (!content) {
+    try {
+      const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve((e.target?.result as ArrayBuffer) || new ArrayBuffer(0));
+        reader.onerror = () => reject(new Error('FileReader arrayBuffer error'));
+        reader.readAsArrayBuffer(file);
+      });
+      if (buffer.byteLength > 0) {
+        content = decodeSubtitleBuffer(buffer);
+      }
+    } catch {}
+  }
+
+  // Stage 3: FileReader readAsText (utf-8)
+  if (!content) {
+    try {
+      content = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve((e.target?.result as string) || '');
+        reader.onerror = () => resolve('');
+        reader.readAsText(file, 'utf-8');
+      });
+    } catch {}
+  }
+
+  let cues = parseSrtOrVtt(content);
+
+  // Stage 4: If parsing yielded 0 cues, try Windows-1252 / ANSI reading
+  if (cues.length === 0) {
+    try {
+      const winContent = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve((e.target?.result as string) || '');
+        reader.onerror = () => resolve('');
+        reader.readAsText(file, 'windows-1252');
+      });
+      if (winContent) {
+        const winCues = parseSrtOrVtt(winContent);
+        if (winCues.length > 0) {
+          cues = winCues;
+        }
+      }
+    } catch {}
+  }
+
   return { fileName: file.name, cues };
 }
 

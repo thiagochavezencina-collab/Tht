@@ -73,11 +73,10 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
   const [urlLabel, setUrlLabel] = useState('Español (Enlace)');
   const [isLoadingUrl, setIsLoadingUrl] = useState(false);
   const [searchPreviewQuery, setSearchPreviewQuery] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
   );
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeTrack = useMemo(() => {
     if (config.trackId === 'off') return null;
@@ -91,14 +90,16 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
     setTimeout(() => setFeedbackMsg(null), 5000);
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const processSubtitleFile = async (file: File) => {
     if (!file) return;
 
     try {
       const { fileName, cues } = await readSubtitleFile(file);
       if (cues.length === 0) {
-        showNotification('error', 'El archivo no contiene marcas de tiempo o subtítulos válidos (.srt, .vtt, .ass).');
+        showNotification(
+          'error',
+          'El archivo no contiene marcas de tiempo o diálogos reconocibles (.srt, .vtt, .ass, .sub).'
+        );
         return;
       }
 
@@ -125,8 +126,14 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
       );
     } catch (err: any) {
       showNotification('error', err?.message || 'Error al procesar el archivo de subtítulos');
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      await processSubtitleFile(file);
+      e.target.value = '';
     }
   };
 
@@ -403,26 +410,51 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
 
               {/* Upload Custom File */}
               <div className="pt-2 border-t border-zinc-800">
-                <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider block mb-2">
-                  Cargar Archivo Local (.SRT o .VTT)
-                </label>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".srt,.vtt,.txt"
-                  className="hidden"
-                  onChange={handleFileUpload}
-                />
-                <button
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider block">
+                    Cargar Archivo Local (.SRT, .VTT, .ASS)
+                  </label>
+                  <span className="text-[10px] text-zinc-500">Celular, Web & Windows</span>
+                </div>
+
+                <label
                   id="upload-srt-file-btn"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full flex items-center justify-center gap-2 p-3.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-zinc-200 border border-dashed border-zinc-600 hover:border-rose-500 transition-all text-xs sm:text-sm font-semibold cursor-pointer group"
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) processSubtitleFile(file);
+                  }}
+                  className={`relative w-full flex flex-col sm:flex-row items-center justify-center gap-2.5 p-4 rounded-xl text-zinc-200 border-2 border-dashed transition-all text-xs sm:text-sm font-semibold cursor-pointer select-none group active:scale-[0.99] ${
+                    isDragging
+                      ? 'bg-rose-950/40 border-rose-500 text-white shadow-lg'
+                      : 'bg-zinc-800/80 hover:bg-zinc-800 border-zinc-600/80 hover:border-rose-500'
+                  }`}
                 >
-                  <Upload className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
-                  <span>Seleccionar archivo de subtítulos de tu dispositivo</span>
-                </button>
-                <p className="text-[11px] text-zinc-500 mt-1.5">
-                  Compatible con formatos estándar <b>.srt</b> (SubRip) y <b>.vtt</b> (WebVTT).
+                  <input
+                    type="file"
+                    accept=".srt,.vtt,.ass,.ssa,.sub,.txt,text/plain,text/vtt,application/x-subrip,application/octet-stream,*/*"
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    onChange={handleFileUpload}
+                  />
+                  <Upload className="w-5 h-5 text-rose-400 group-hover:scale-110 transition-transform shrink-0" />
+                  <div className="text-center sm:text-left">
+                    <span className="block text-zinc-100 font-semibold text-xs sm:text-sm">
+                      {isDragging ? 'Suelta el archivo aquí' : 'Toca o arrastra tu archivo de subtítulos'}
+                    </span>
+                    <span className="block text-[11px] text-zinc-400 font-normal">
+                      Compatible con celular (Android, iPhone) y PC (Windows, Mac)
+                    </span>
+                  </div>
+                </label>
+                <p className="text-[11px] text-zinc-500 mt-1.5 flex items-center gap-1.5">
+                  <Check className="w-3 h-3 text-emerald-400 shrink-0" />
+                  <span>Soporta .srt, .vtt, .ass, .ssa, .sub y archivos de texto (.txt)</span>
                 </p>
               </div>
 

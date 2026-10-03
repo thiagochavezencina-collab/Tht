@@ -384,9 +384,9 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({ onClose, onAddMovi
                     </span>
                     <input
                       type="file"
-                      accept="video/*"
+                      accept="video/*,video/mp4,video/x-matroska,video/webm,video/quicktime,.mp4,.mkv,.webm,.mov,.avi,.m4v,*/*"
                       onChange={(e) => handleFileUpload(e)}
-                      className="hidden"
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                     />
                   </label>
                   {videoUrl && (
@@ -465,14 +465,14 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({ onClose, onAddMovi
                         onChange={(e) => updateEpisode(idx, 'videoUrl', e.target.value)}
                         className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-rose-500"
                       />
-                      <label className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold cursor-pointer shrink-0 flex items-center gap-1 border border-zinc-700">
-                        <Upload className="w-3 h-3" />
+                      <label className="relative px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold cursor-pointer shrink-0 flex items-center gap-1 border border-zinc-700 overflow-hidden">
+                        <Upload className="w-3 h-3 shrink-0" />
                         <span>Archivo</span>
                         <input
                           type="file"
-                          accept="video/*"
+                          accept="video/*,video/mp4,video/x-matroska,video/webm,video/quicktime,.mp4,.mkv,.webm,.mov,.avi,.m4v,*/*"
                           onChange={(e) => handleFileUpload(e, idx)}
-                          className="hidden"
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                         />
                       </label>
                     </div>

@@ -153,22 +153,26 @@ export const SubtitleFormSection: React.FC<SubtitleFormSectionProps> = ({
 
       {/* Upload .srt / .vtt file */}
       <div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".srt,.vtt,.txt"
-          onChange={handleFileUpload}
-          className="hidden"
-        />
-        <button
-          type="button"
-          disabled={isProcessingFile}
-          onClick={() => fileInputRef.current?.click()}
-          className="w-full py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-dashed border-zinc-700 hover:border-rose-500 text-xs font-semibold text-zinc-300 hover:text-white flex items-center justify-center gap-2 transition-all cursor-pointer"
+        <label
+          className="relative w-full py-3 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-dashed border-zinc-700 hover:border-rose-500 text-xs font-semibold text-zinc-300 hover:text-white flex items-center justify-center gap-2 transition-all cursor-pointer group active:scale-[0.99]"
         >
-          <Upload className="w-3.5 h-3.5 text-rose-400" />
-          <span>{isProcessingFile ? 'Leyendo subtítulos...' : '+ Cargar archivo de subtítulos (.srt o .vtt)'}</span>
-        </button>
+          <input
+            type="file"
+            accept=".srt,.vtt,.ass,.ssa,.sub,.txt,text/plain,text/vtt,application/x-subrip,application/octet-stream,*/*"
+            onChange={handleFileUpload}
+            disabled={isProcessingFile}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+          />
+          <Upload className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform shrink-0" />
+          <span>
+            {isProcessingFile
+              ? 'Leyendo subtítulos...'
+              : '+ Cargar archivo de subtítulos (.srt, .vtt, .ass)'}
+          </span>
+        </label>
+        <span className="block text-[10px] text-zinc-500 text-center mt-1">
+          Funciona en celular (Android, iPhone), Windows y Web
+        </span>
       </div>
 
       {/* Or Add via URL */}

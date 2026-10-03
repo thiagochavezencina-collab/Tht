@@ -1470,6 +1470,34 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           /* RENDER CASE 2: Native HTML5 Video Element with Full Controls & Minute Bar */
           <div
             onClick={handleVideoTap}
+            onDragOver={(e) => {
+              e.preventDefault();
+            }}
+            onDrop={async (e) => {
+              e.preventDefault();
+              const file = e.dataTransfer.files?.[0];
+              if (file && /\.(srt|vtt|ass|ssa|sub|txt)$/i.test(file.name)) {
+                try {
+                  const { fileName, cues } = await readSubtitleFile(file);
+                  if (cues.length > 0) {
+                    const detected = detectSubtitleLanguage(cues, fileName);
+                    const cleanName = fileName.replace(/\.[^/.]+$/, '');
+                    const newTrack: SubtitleTrack = {
+                      id: `dropped-${Date.now()}`,
+                      lang: detected.lang,
+                      label: `${cleanName} [${detected.flag} ${detected.languageName}]`,
+                      fileName,
+                      cues,
+                    };
+                    setCustomTracks((prev) => [...prev, newTrack]);
+                    setSubtitleConfig((prev) => ({ ...prev, trackId: newTrack.id }));
+                    setResumeToast(`📥 Subtítulo arrastrado con éxito (${cues.length} líneas)`);
+                  }
+                } catch {
+                  setResumeToast('Error al leer el archivo arrastrado');
+                }
+              }
+            }}
             className="w-full h-full relative flex items-center justify-center bg-black cursor-pointer select-none"
           >
             {playableVideoUrl && !hasVideoError && (
@@ -1804,14 +1832,14 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                         </div>
                       </div>
 
-                      <label className="flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold text-xs border border-zinc-700 hover:border-zinc-600 transition-all cursor-pointer">
-                        <Upload className="w-4 h-4 text-rose-400" />
-                        <span>Seleccionar archivo en tu laptop (.mp4, .mkv, .webm)</span>
+                      <label className="relative flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold text-xs border border-zinc-700 hover:border-zinc-600 transition-all cursor-pointer overflow-hidden">
+                        <Upload className="w-4 h-4 text-rose-400 shrink-0" />
+                        <span>Seleccionar archivo en tu dispositivo (.mp4, .mkv, .webm)</span>
                         <input
                           type="file"
-                          accept="video/*"
+                          accept="video/*,video/mp4,video/x-matroska,video/webm,video/quicktime,.mp4,.mkv,.webm,.mov,.avi,.m4v,*/*"
                           onChange={handleReattachVideoFile}
-                          className="hidden"
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                         />
                       </label>
                     </div>
@@ -2442,16 +2470,21 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                       ))}
 
                       <div className="pt-1.5 mt-1.5 border-t border-zinc-800 space-y-1">
-                        <button
-                          onClick={() => {
-                            setShowSubtitlesMenu(false);
-                            subFileInputRef.current?.click();
-                          }}
-                          className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-950/40 hover:text-rose-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                        <label
+                          className="relative w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-950/40 hover:text-rose-300 flex items-center gap-1.5 transition-colors cursor-pointer block overflow-hidden active:scale-95"
                         >
-                          <Upload className="w-3.5 h-3.5" />
-                          <span>Cargar archivo .SRT o .VTT</span>
-                        </button>
+                          <input
+                            type="file"
+                            accept=".srt,.vtt,.ass,.ssa,.sub,.txt,text/plain,text/vtt,application/x-subrip,application/octet-stream,*/*"
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                            onChange={(e) => {
+                              handleLocalSubtitleFilePick(e);
+                              setShowSubtitlesMenu(false);
+                            }}
+                          />
+                          <Upload className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">Cargar archivo .SRT o .VTT</span>
+                        </label>
 
                         <button
                           onClick={() => handleGenerateAiSubtitlesDirectly('es')}
@@ -2716,16 +2749,21 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                     </div>
 
                     <div className="flex gap-2 mb-2">
-                      <button
-                        onClick={() => {
-                          setShowMobileSettingsModal(false);
-                          subFileInputRef.current?.click();
-                        }}
-                        className="flex-1 py-2 px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-xs font-semibold text-rose-400 border border-zinc-700 flex items-center justify-center gap-1.5 cursor-pointer"
+                      <label
+                        className="relative flex-1 py-2 px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-xs font-semibold text-rose-400 border border-zinc-700 flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 overflow-hidden"
                       >
-                        <Upload className="w-3.5 h-3.5" />
+                        <input
+                          type="file"
+                          accept=".srt,.vtt,.ass,.ssa,.sub,.txt,text/plain,text/vtt,application/x-subrip,application/octet-stream,*/*"
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                          onChange={(e) => {
+                            handleLocalSubtitleFilePick(e);
+                            setShowMobileSettingsModal(false);
+                          }}
+                        />
+                        <Upload className="w-3.5 h-3.5 shrink-0" />
                         <span>Subir .SRT/.VTT</span>
-                      </button>
+                      </label>
                       <button
                         onClick={() => {
                           setShowMobileSettingsModal(false);
@@ -2964,7 +3002,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         <input
           ref={subFileInputRef}
           type="file"
-          accept=".srt,.vtt,.txt"
+          accept=".srt,.vtt,.ass,.ssa,.sub,.txt,text/plain,text/vtt,application/x-subrip,application/octet-stream,*/*"
           className="hidden"
           onChange={handleLocalSubtitleFilePick}
         />

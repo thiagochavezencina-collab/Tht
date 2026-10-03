@@ -265,9 +265,9 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-950 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white text-xs font-medium cursor-pointer transition-colors">
-                <Upload className="w-3.5 h-3.5 text-rose-400" />
-                <span>
+              <label className="relative flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-zinc-950 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white text-xs font-medium cursor-pointer transition-colors overflow-hidden">
+                <Upload className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                <span className="truncate">
                   {selectedFile
                     ? `Archivo seleccionado: ${selectedFile.name}`
                     : fileName
@@ -276,7 +276,7 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
                 </span>
                 <input
                   type="file"
-                  accept="video/*"
+                  accept="video/*,video/mp4,video/x-matroska,video/webm,video/quicktime,.mp4,.mkv,.webm,.mov,.avi,.m4v,*/*"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
                     if (f) {
@@ -284,7 +284,7 @@ export const EditMovieModal: React.FC<EditMovieModalProps> = ({
                       setFileName(f.name);
                     }
                   }}
-                  className="hidden"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                 />
               </label>
             </div>
