@@ -15,5 +15,10 @@ service cloud.firestore {
     match /movie_suggestions/{suggestionId} {
       allow read, write: if true;
     }
+
+    // Temporary cross-device session synchronization (QR Code laptop -> mobile)
+    match /sync_sessions/{sessionId} {
+      allow read, write: if true;
+    }
   }
 }

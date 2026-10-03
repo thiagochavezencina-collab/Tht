@@ -1,12 +1,38 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { handleStreamProxyRequest } from './src/server/proxyHandler';
+
+function streamProxyPlugin(): Plugin {
+  return {
+    name: 'stream-proxy-plugin',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url && req.url.startsWith('/api/proxy-stream')) {
+          handleStreamProxyRequest(req, res);
+        } else {
+          next();
+        }
+      });
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url && req.url.startsWith('/api/proxy-stream')) {
+          handleStreamProxyRequest(req, res);
+        } else {
+          next();
+        }
+      });
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
     plugins: [
+      streamProxyPlugin(),
       react(),
       tailwindcss(),
       VitePWA({

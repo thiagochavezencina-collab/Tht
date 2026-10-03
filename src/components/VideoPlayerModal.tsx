@@ -34,14 +34,37 @@ import {
   Copy,
   Info,
   MonitorPlay,
+  Download,
+  Lightbulb,
+  LightbulbOff,
+  Keyboard,
+  ChevronUp,
+  ChevronDown,
+  Shield,
+  ShieldCheck,
+  ShieldAlert,
+  QrCode,
 } from 'lucide-react';
 import { Movie, PlayerMode, Episode, SubtitleTrack } from '../types';
 import { parseVideoSource } from '../utils/videoHelper';
 import { saveVideoBlob, resolvePlayableVideoUrl } from '../utils/videoStorage';
 import { updateMovieInFirestore } from '../firestoreService';
 import { SubtitleModal, SubtitleConfig } from './SubtitleModal';
-import { readSubtitleFile, generateAiSubtitles, detectSubtitleLanguage } from '../utils/subtitleHelper';
+import {
+  readSubtitleFile,
+  generateAiSubtitles,
+  detectSubtitleLanguage,
+  downloadSubtitleFile,
+  exportCuesToVtt,
+  loadSubtitlesFromUrl,
+} from '../utils/subtitleHelper';
 import { useMobileControlLogic } from '../hooks/useMobileControlLogic';
+import {
+  isSchoolProxyEnabled,
+  setSchoolProxyEnabled,
+  isProxyEligible,
+  getProxiedVideoUrl,
+} from '../utils/streamProxyHelper';
 
 // Helper: Format seconds to MM:SS or HH:MM:SS
 function formatTime(seconds: number): string {
@@ -64,6 +87,14 @@ interface VideoPlayerModalProps {
   initialTime?: number;
   onProgressUpdate: (movieId: string, currentTime: number, duration: number) => void;
   onUpdateMovie?: (movie: Movie) => void;
+  onOpenSync?: (currentPlaying: {
+    movieId: string;
+    title: string;
+    currentTime: number;
+    duration: number;
+    episodeId?: string;
+    episodeTitle?: string;
+  }) => void;
 }
 
 export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
@@ -75,6 +106,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   initialTime = 0,
   onProgressUpdate,
   onUpdateMovie,
+  onOpenSync,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -116,6 +148,23 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const [isPlaying, setIsPlaying] = useState(() => !!rawVideoUrl && rawVideoUrl.trim() !== '');
   const [isBuffering, setIsBuffering] = useState(false);
 
+  // School Anti-Filter Proxy Layer (bypasses institutional media player blocks on non-Google Drive links)
+  const [isSchoolProxyActive, setIsSchoolProxyActive] = useState<boolean>(() => isSchoolProxyEnabled());
+  const [unproxiedRawLiveUrl, setUnproxiedRawLiveUrl] = useState<string>('');
+
+  const toggleSchoolProxy = useCallback(() => {
+    setIsSchoolProxyActive((prev) => {
+      const next = !prev;
+      setSchoolProxyEnabled(next);
+      setResumeToast(
+        next
+          ? '🛡️ Antifiltro Escolar activado: tráfico enrutado por nuestro dominio (Bypass Media Player)'
+          : '⚡ Modo directo activado: conexión directa con el servidor de video'
+      );
+      return next;
+    });
+  }, []);
+
   // Resolve video URL from local IndexedDB if stored as a file
   useEffect(() => {
     let isCancelled = false;
@@ -128,6 +177,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         const hasValidUrl = liveUrl && liveUrl.trim() !== '' && !liveUrl.startsWith('blob:null');
         if (!hasValidUrl) {
           setPlayableVideoUrl('');
+          setUnproxiedRawLiveUrl('');
           setHasVideoError(true);
           setIsPlaying(false);
           setErrorMessage(
@@ -136,7 +186,12 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               : 'No se encontró un archivo o enlace de video para reproducir.'
           );
         } else {
-          setPlayableVideoUrl(liveUrl);
+          setUnproxiedRawLiveUrl(liveUrl);
+          const finalUrl =
+            isSchoolProxyActive && isProxyEligible(liveUrl)
+              ? getProxiedVideoUrl(liveUrl, { title: movie.title, disguise: true })
+              : liveUrl;
+          setPlayableVideoUrl(finalUrl);
           setHasVideoError(false);
           setErrorMessage('');
         }
@@ -146,7 +201,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [activeEpisodeId, rawVideoUrl, movie.hasLocalFile, movie.fileName]);
+  }, [activeEpisodeId, rawVideoUrl, movie.hasLocalFile, movie.fileName, isSchoolProxyActive]);
 
   // Source detection
   const [forceEmbedMode, setForceEmbedMode] = useState(false);
@@ -191,16 +246,144 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     fontSize: 'lg',
     textColor: 'white',
     backgroundStyle: 'solid',
+    verticalPosition: 'drive_safe',
   });
   const [customTracks, setCustomTracks] = useState<SubtitleTrack[]>([]);
   const [isSubtitleModalOpen, setIsSubtitleModalOpen] = useState(false);
   const subFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Cinema Mode & Dimming States
+  const [isDimmed, setIsDimmed] = useState(false);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+
+  // Drive & Embed Subtitle Sync Engine
+  const [driveSubtitleTime, setDriveSubtitleTime] = useState<number>(0);
+  const [isDriveSubtitlePlaying, setIsDriveSubtitlePlaying] = useState<boolean>(true);
+  const [isDriveSyncBarMinimized, setIsDriveSyncBarMinimized] = useState<boolean>(false);
 
   const availableTracks = useMemo<SubtitleTrack[]>(() => {
     const movieTracks = movie.subtitles || [];
     const episodeTracks = activeEpisode?.subtitles || [];
     return [...movieTracks, ...episodeTracks, ...customTracks];
   }, [movie.subtitles, activeEpisode, customTracks]);
+
+  // Cinema Mode: auto-dim lights smoothly when entering theater or fullscreen
+  const toggleDimming = useCallback(() => {
+    setIsDimmed((prev) => {
+      const next = !prev;
+      setResumeToast(next ? '✨ Modo Cine: Luces atenuadas' : '💡 Luces encendidas');
+      return next;
+    });
+  }, []);
+
+  const toggleTheaterMode = useCallback(() => {
+    setIsTheaterMode((prev) => {
+      const next = !prev;
+      if (next) setIsDimmed(true);
+      setResumeToast(next ? '🎬 Modo Cine activado' : 'Modo normal');
+      return next;
+    });
+  }, []);
+
+  const [currentSubtitleText, setCurrentSubtitleText] = useState<string>('');
+
+  // Active Subtitle Track
+  const activeSubTrack = useMemo(() => {
+    if (subtitleConfig.trackId === 'off') return null;
+    return (
+      availableTracks.find(
+        (s) => s.id === subtitleConfig.trackId || s.lang === subtitleConfig.trackId
+      ) || null
+    );
+  }, [availableTracks, subtitleConfig.trackId]);
+
+  // Auto-fetch cues if track has url but no cues
+  useEffect(() => {
+    if (!activeSubTrack || (activeSubTrack.cues && activeSubTrack.cues.length > 0)) return;
+    if (activeSubTrack.url) {
+      loadSubtitlesFromUrl(activeSubTrack.url)
+        .then((cues) => {
+          if (cues && cues.length > 0) {
+            setCustomTracks((prev) => {
+              const existingIdx = prev.findIndex((t) => t.id === activeSubTrack.id);
+              if (existingIdx >= 0) {
+                const next = [...prev];
+                next[existingIdx] = { ...next[existingIdx], cues };
+                return next;
+              }
+              return [...prev, { ...activeSubTrack, cues }];
+            });
+          }
+        })
+        .catch((err) => console.warn('Could not auto-fetch subtitle cues from URL:', err));
+    }
+  }, [activeSubTrack]);
+
+  // Auto-select first available subtitle track if none is active
+  useEffect(() => {
+    if (subtitleConfig.trackId === 'off') {
+      const firstAvailable =
+        (movie.subtitles && movie.subtitles.length > 0 ? movie.subtitles[0] : null) ||
+        (activeEpisode?.subtitles && activeEpisode.subtitles.length > 0 ? activeEpisode.subtitles[0] : null);
+      if (firstAvailable) {
+        setSubtitleConfig((prev) => ({
+          ...prev,
+          trackId: firstAvailable.id || firstAvailable.lang,
+        }));
+      }
+    }
+  }, [movie.id, activeEpisode?.id, movie.subtitles, activeEpisode?.subtitles]);
+
+  // WebVTT Blob URL for native player / mobile fullscreen support
+  const vttBlobUrl = useMemo(() => {
+    if (!activeSubTrack || !activeSubTrack.cues || activeSubTrack.cues.length === 0) return null;
+    try {
+      const vtt = exportCuesToVtt(activeSubTrack.cues);
+      const blob = new Blob([vtt], { type: 'text/vtt;charset=utf-8' });
+      return URL.createObjectURL(blob);
+    } catch {
+      return null;
+    }
+  }, [activeSubTrack]);
+
+  useEffect(() => {
+    return () => {
+      if (vttBlobUrl) URL.revokeObjectURL(vttBlobUrl);
+    };
+  }, [vttBlobUrl]);
+
+  // Mode hidden prevents browser default render from overlaying duplicate captions
+  useEffect(() => {
+    if (!videoRef.current || !videoRef.current.textTracks) return;
+    const tracks = videoRef.current.textTracks;
+    for (let i = 0; i < tracks.length; i++) {
+      tracks[i].mode = 'hidden';
+    }
+  }, [vttBlobUrl]);
+
+  // Drive & Embed subtitle synchronization interval
+  useEffect(() => {
+    if (!isUsingEmbed || subtitleConfig.trackId === 'off' || !isDriveSubtitlePlaying) return;
+    const interval = setInterval(() => {
+      setDriveSubtitleTime((t) => t + 0.5);
+    }, 500);
+    return () => clearInterval(interval);
+  }, [isUsingEmbed, subtitleConfig.trackId, isDriveSubtitlePlaying]);
+
+  // Unified Reactive Subtitle cue matcher (works across play, pause, seek, and embed modes)
+  const effectiveCurrentTime = isUsingEmbed ? driveSubtitleTime : currentTime;
+
+  useEffect(() => {
+    if (!activeSubTrack || !activeSubTrack.cues || activeSubTrack.cues.length === 0) {
+      setCurrentSubtitleText('');
+      return;
+    }
+    const adjustedTime = effectiveCurrentTime + (subtitleConfig.offsetSeconds || 0);
+    const matchingCue = activeSubTrack.cues.find(
+      (cue) => adjustedTime >= cue.start && adjustedTime <= cue.end
+    );
+    setCurrentSubtitleText(matchingCue ? matchingCue.text : '');
+  }, [effectiveCurrentTime, activeSubTrack, subtitleConfig.offsetSeconds]);
 
   // Handle local VTT or SRT file selection and synchronization
   const handleLocalSubtitleFilePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -210,7 +393,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     try {
       const { fileName, cues } = await readSubtitleFile(file);
       if (cues.length === 0) {
-        setResumeToast('El archivo no contiene subtítulos o marcas de tiempo válidas (.srt o .vtt)');
+        setResumeToast('El archivo no contiene subtítulos o marcas de tiempo válidas (.srt, .vtt, .ass)');
         return;
       }
 
@@ -230,7 +413,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         trackId: newTrack.id,
       }));
       setResumeToast(
-        `✨ Idioma detectado: ${detected.flag} ${detected.languageName} (${detected.confidence}%). Pista asignada automáticamente (${cues.length} líneas).`
+        `✨ Subtítulos activados: ${cues.length} líneas (${detected.flag} ${detected.languageName}). Primer diálogo: ${Math.floor(cues[0].start / 60)}:${String(Math.floor(cues[0].start % 60)).padStart(2, '0')}`
       );
       setShowSubtitlesMenu(false);
     } catch (err: any) {
@@ -260,7 +443,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     setShowSubtitlesMenu(false);
   };
 
-  const [currentSubtitleText, setCurrentSubtitleText] = useState<string>('');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isTheaterMode, setIsTheaterMode] = useState(false);
 
@@ -442,24 +624,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     const current = videoRef.current.currentTime;
     setCurrentTime(current);
     onProgressUpdate(movie.id, current, videoRef.current.duration || 0);
-
-    // Update Subtitles based on current time + offset
-    if (subtitleConfig.trackId !== 'off') {
-      const activeSubTrack = availableTracks.find(
-        (s) => s.id === subtitleConfig.trackId || s.lang === subtitleConfig.trackId
-      );
-      if (activeSubTrack && activeSubTrack.cues && activeSubTrack.cues.length > 0) {
-        const adjustedTime = current + (subtitleConfig.offsetSeconds || 0);
-        const matchingCue = activeSubTrack.cues.find(
-          (cue) => adjustedTime >= cue.start && adjustedTime <= cue.end
-        );
-        setCurrentSubtitleText(matchingCue ? matchingCue.text : '');
-      } else {
-        setCurrentSubtitleText('');
-      }
-    } else {
-      setCurrentSubtitleText('');
-    }
   };
 
   const handleLoadedMetadata = () => {
@@ -541,10 +705,12 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
   const handleSkip = (seconds: number) => {
     if (!videoRef.current) return;
-    videoRef.current.currentTime = Math.max(
+    const newTime = Math.max(
       0,
       Math.min(videoRef.current.currentTime + seconds, duration)
     );
+    videoRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
     showControlsTemporarily();
   };
 
@@ -709,11 +875,65 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         case ' ':
         case 'k':
           e.preventDefault();
-          if (!isEmbedSource) togglePlay();
+          if (isUsingEmbed) {
+            setIsDriveSubtitlePlaying((prev) => {
+              const next = !prev;
+              setResumeToast(next ? '▶ Sincronizador de subtítulos reanudado' : '⏸ Sincronizador de subtítulos en pausa');
+              return next;
+            });
+          } else {
+            togglePlay();
+          }
           break;
         case 'f':
           e.preventDefault();
           toggleFullscreen();
+          break;
+        case 't':
+          e.preventDefault();
+          toggleTheaterMode();
+          break;
+        case 'd':
+          e.preventDefault();
+          toggleDimming();
+          break;
+        case 'c':
+          e.preventDefault();
+          setSubtitleConfig((prev) => {
+            if (prev.trackId !== 'off') {
+              setResumeToast('Subtítulos desactivados');
+              return { ...prev, trackId: 'off' };
+            } else {
+              const first = availableTracks[0];
+              const targetId = first ? first.id : 'off';
+              setResumeToast(targetId !== 'off' ? `Subtítulos activados (${first.label})` : 'Carga un subtítulo primero');
+              return { ...prev, trackId: targetId };
+            }
+          });
+          break;
+        case '[':
+          e.preventDefault();
+          setSubtitleConfig((prev) => {
+            const nextOffset = Number((prev.offsetSeconds - 0.5).toFixed(1));
+            setResumeToast(`⏱ Desfase subtítulos: ${nextOffset > 0 ? '+' : ''}${nextOffset}s`);
+            return { ...prev, offsetSeconds: nextOffset };
+          });
+          break;
+        case ']':
+          e.preventDefault();
+          setSubtitleConfig((prev) => {
+            const nextOffset = Number((prev.offsetSeconds + 0.5).toFixed(1));
+            setResumeToast(`⏱ Desfase subtítulos: ${nextOffset > 0 ? '+' : ''}${nextOffset}s`);
+            return { ...prev, offsetSeconds: nextOffset };
+          });
+          break;
+        case '?':
+          e.preventDefault();
+          setShowShortcutsModal((prev) => !prev);
+          break;
+        case 'p':
+          e.preventDefault();
+          toggleSchoolProxy();
           break;
         case 'm':
           e.preventDefault();
@@ -728,7 +948,9 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           if (!isEmbedSource) handleSkip(10);
           break;
         case 'escape':
-          if (isFullscreen) {
+          if (showShortcutsModal) {
+            setShowShortcutsModal(false);
+          } else if (isFullscreen) {
             document.exitFullscreen().catch(() => {});
           } else {
             onClose();
@@ -739,12 +961,33 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isFullscreen, isPlaying, volume, duration, isEmbedSource]);
+  }, [
+    isFullscreen,
+    isPlaying,
+    volume,
+    duration,
+    isEmbedSource,
+    isUsingEmbed,
+    availableTracks,
+    showShortcutsModal,
+    toggleDimming,
+    toggleTheaterMode,
+    toggleSchoolProxy,
+    togglePlay,
+    toggleFullscreen,
+    toggleMute,
+    handleSkip,
+    onClose,
+  ]);
 
-  // Fullscreen change listener
+  // Fullscreen change listener with auto-dimming transition
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
+      const isFs = !!document.fullscreenElement;
+      setIsFullscreen(isFs);
+      if (isFs) {
+        setIsDimmed(true);
+      }
     };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
@@ -841,19 +1084,23 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       onMouseMove={showControlsTemporarily}
       onTouchStart={handleGlobalTouchStart}
       onTouchEnd={handleGlobalTouchEnd}
-      className={`fixed inset-0 z-50 bg-black flex transition-all duration-300 select-none overflow-hidden h-[100dvh] max-h-[100dvh] w-full max-w-full ${
+      className={`fixed inset-0 z-50 bg-black flex transition-all duration-700 ease-in-out select-none overflow-hidden h-[100dvh] max-h-[100dvh] w-full max-w-full ${
         isMobilePortrait && !isFullscreen && !mobileLogic.isEmbedExpandedFullscreen
           ? 'flex-col justify-start overflow-y-auto bg-zinc-950 text-white p-0'
           : 'items-center justify-center ' +
             (isTheaterMode || isFullscreen || mobileLogic.isEmbedExpandedFullscreen
-              ? 'p-0'
-              : 'p-0 sm:p-4 md:p-8 bg-zinc-950/95 backdrop-blur-xl')
+              ? 'p-0 bg-black'
+              : isDimmed
+              ? 'p-0 sm:p-2 md:p-4 bg-black transition-colors duration-700'
+              : 'p-0 sm:p-4 md:p-8 bg-zinc-950/95 backdrop-blur-xl transition-all duration-700')
       }`}
       style={{ height: '100dvh', maxHeight: '100dvh' }}
     >
-      {/* Ambient Backdrop Glow */}
+      {/* Ambient Backdrop Glow with Smooth Dimming Transition */}
       <div
-        className="absolute inset-0 opacity-20 pointer-events-none filter blur-3xl scale-125 transition-all duration-1000"
+        className={`absolute inset-0 pointer-events-none filter blur-3xl scale-125 transition-all duration-1000 ease-in-out ${
+          isDimmed || isTheaterMode || isFullscreen ? 'opacity-0' : 'opacity-20'
+        }`}
         style={{
           backgroundImage: `url(${movie.backdropUrl || movie.posterUrl})`,
           backgroundSize: 'cover',
@@ -863,11 +1110,13 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
       {/* Main Video Wrapper */}
       <div
-        className={`relative w-full overflow-hidden bg-black shadow-2xl transition-all duration-300 ${
+        className={`relative w-full overflow-hidden bg-black shadow-2xl transition-all duration-700 ease-in-out ${
           isMobilePortrait && !isFullscreen && !mobileLogic.isEmbedExpandedFullscreen
             ? 'aspect-video sticky top-0 z-40 shrink-0 border-b border-zinc-800/80 shadow-2xl'
             : isTheaterMode || isFullscreen || mobileLogic.isEmbedExpandedFullscreen
-            ? 'h-full w-full rounded-none'
+            ? 'h-full w-full rounded-none border-0'
+            : isDimmed
+            ? 'h-full sm:h-[92vh] max-w-7xl aspect-video rounded-none sm:rounded-2xl border border-zinc-800/40 shadow-[0_0_80px_rgba(0,0,0,0.9)]'
             : 'h-full sm:h-auto max-w-6xl aspect-video sm:max-h-[85vh] rounded-none sm:rounded-2xl border-0 sm:border border-zinc-800/80 shadow-rose-950/20'
         }`}
       >
@@ -891,6 +1140,149 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               // @ts-ignore
               mozallowfullscreen="true"
             />
+
+            {/* Subtitles Overlay on top of Embed / Google Drive */}
+            {currentSubtitleText && (
+              <div
+                className={`absolute left-0 right-0 px-4 sm:px-6 text-center pointer-events-none z-30 select-none transition-all duration-300 ${
+                  (subtitleConfig.verticalPosition || 'drive_safe') === 'top'
+                    ? 'top-16 sm:top-20'
+                    : (subtitleConfig.verticalPosition || 'drive_safe') === 'drive_safe'
+                    ? 'bottom-20 sm:bottom-28'
+                    : 'bottom-14 sm:bottom-16'
+                }`}
+              >
+                <span
+                  className={`inline-block transition-all max-w-[92%] sm:max-w-[80%] leading-relaxed ${
+                    subtitleConfig.fontSize === 'sm'
+                      ? 'text-xs sm:text-sm'
+                      : subtitleConfig.fontSize === 'base'
+                      ? 'text-sm sm:text-base'
+                      : subtitleConfig.fontSize === 'lg'
+                      ? 'text-base sm:text-lg md:text-xl'
+                      : subtitleConfig.fontSize === 'xl'
+                      ? 'text-lg sm:text-xl md:text-2xl font-bold'
+                      : 'text-xl sm:text-2xl md:text-3xl font-extrabold'
+                  } ${
+                    subtitleConfig.textColor === 'yellow'
+                      ? 'text-yellow-300 drop-shadow-[0_2px_8px_rgba(0,0,0,1)]'
+                      : subtitleConfig.textColor === 'cyan'
+                      ? 'text-cyan-300 drop-shadow-[0_2px_8px_rgba(0,0,0,1)]'
+                      : subtitleConfig.textColor === 'green'
+                      ? 'text-emerald-300 drop-shadow-[0_2px_8px_rgba(0,0,0,1)]'
+                      : 'text-white drop-shadow-[0_2px_8px_rgba(0,0,0,1)]'
+                  } ${
+                    subtitleConfig.backgroundStyle === 'solid'
+                      ? 'bg-black/90 px-4 sm:px-6 py-1.5 sm:py-2 rounded-xl border border-white/20 shadow-2xl tracking-wide backdrop-blur-md'
+                      : subtitleConfig.backgroundStyle === 'translucent'
+                      ? 'bg-black/50 backdrop-blur-md px-4 sm:px-6 py-1.5 rounded-xl shadow-xl tracking-wide border border-white/10'
+                      : 'drop-shadow-[0_3px_8px_rgba(0,0,0,1)] tracking-wide font-extrabold'
+                  }`}
+                >
+                  {currentSubtitleText}
+                </span>
+              </div>
+            )}
+
+            {/* Floating Drive Subtitle Sync Controller (PC & Drive helper) */}
+            {subtitleConfig.trackId !== 'off' && (
+              <div
+                className={`absolute z-30 transition-all duration-300 pointer-events-auto ${
+                  isDriveSyncBarMinimized
+                    ? 'top-16 right-3'
+                    : 'top-16 left-1/2 -translate-x-1/2 w-[94%] sm:w-auto max-w-lg'
+                }`}
+              >
+                {isDriveSyncBarMinimized ? (
+                  <button
+                    onClick={() => setIsDriveSyncBarMinimized(false)}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-950/90 hover:bg-black text-white text-xs font-semibold border border-rose-500/40 shadow-2xl backdrop-blur-md cursor-pointer animate-fade-in"
+                    title="Expandir sincronizador de subtítulos"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                    <span>Sub: {formatTime(driveSubtitleTime)}</span>
+                    <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+                  </button>
+                ) : (
+                  <div className="bg-zinc-950/95 border border-zinc-700/80 rounded-2xl p-2.5 sm:p-3 shadow-2xl backdrop-blur-xl text-zinc-100 flex flex-wrap items-center justify-between gap-2 text-xs animate-fade-in">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setIsDriveSubtitlePlaying(!isDriveSubtitlePlaying)}
+                        className={`p-1.5 rounded-lg flex items-center justify-center cursor-pointer transition-colors ${
+                          isDriveSubtitlePlaying
+                            ? 'bg-rose-600 text-white'
+                            : 'bg-zinc-800 text-amber-300 hover:bg-zinc-700'
+                        }`}
+                        title={isDriveSubtitlePlaying ? 'Pausar avance de subtítulos (Espacio)' : 'Reanudar subtítulos (Espacio)'}
+                      >
+                        {isDriveSubtitlePlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                      </button>
+
+                      <span className="font-mono text-xs font-bold text-amber-300 min-w-[45px]">
+                        {formatTime(driveSubtitleTime)}
+                      </span>
+
+                      <span className="text-[10px] text-zinc-400 hidden sm:inline">
+                        (Tiempo Drive)
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setDriveSubtitleTime((t) => Math.max(0, t - 5))}
+                        className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-semibold cursor-pointer"
+                        title="Retroceder 5 segundos"
+                      >
+                        -5s
+                      </button>
+                      <button
+                        onClick={() => setDriveSubtitleTime((t) => t + 5)}
+                        className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-semibold cursor-pointer"
+                        title="Adelantar 5 segundos"
+                      >
+                        +5s
+                      </button>
+                      <button
+                        onClick={() => {
+                          const input = prompt('Ingresa el minuto o segundo actual del video en Drive (ej: 12:30 o 45):', formatTime(driveSubtitleTime));
+                          if (input) {
+                            if (input.includes(':')) {
+                              const [m, s] = input.split(':').map(Number);
+                              if (!isNaN(m) && !isNaN(s)) setDriveSubtitleTime(m * 60 + s);
+                            } else {
+                              const s = Number(input);
+                              if (!isNaN(s)) setDriveSubtitleTime(s);
+                            }
+                          }
+                        }}
+                        className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 text-[11px] font-semibold cursor-pointer border border-amber-500/30"
+                        title="Ajustar tiempo exacto de Google Drive"
+                      >
+                        Sincronizar
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      <button
+                        onClick={() => setIsSubtitleModalOpen(true)}
+                        className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 cursor-pointer"
+                        title="Ajustes de subtítulos y tamaño"
+                      >
+                        <SlidersHorizontal className="w-3.5 h-3.5 text-rose-400" />
+                      </button>
+                      <button
+                        onClick={() => setIsDriveSyncBarMinimized(true)}
+                        className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white cursor-pointer"
+                        title="Minimizar barra"
+                      >
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Dedicated Clean Embed Overlay Header (Safe-area compliant, high contrast, non-overlapping) */}
             <div
               className="absolute inset-x-0 top-0 z-30 flex items-center justify-between pointer-events-none p-2 sm:p-3"
@@ -922,6 +1314,78 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   </button>
                 )}
 
+                {/* Subtitles Button for Embed / Drive */}
+                <button
+                  onClick={() => setIsSubtitleModalOpen(true)}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold backdrop-blur-md shadow-xl active:scale-95 cursor-pointer min-h-[40px] border transition-colors ${
+                    subtitleConfig.trackId !== 'off'
+                      ? 'bg-rose-600 text-white border-rose-400/60 shadow-rose-950/40'
+                      : 'bg-zinc-900/90 hover:bg-zinc-800 text-zinc-200 border-zinc-700/60'
+                  }`}
+                  title="Configurar y activar subtítulos para PC y Drive (C)"
+                >
+                  <Subtitles className="w-3.5 h-3.5 text-rose-300" />
+                  <span className="hidden sm:inline">
+                    {subtitleConfig.trackId !== 'off' ? 'Subtítulos: ON' : 'Subtítulos'}
+                  </span>
+                </button>
+
+                {/* Download .SRT 1-click button for Google Drive in PC */}
+                {availableTracks.length > 0 && (
+                  <button
+                    onClick={() => {
+                      const target = availableTracks.find((t) => t.id === subtitleConfig.trackId) || availableTracks[0];
+                      if (target && target.cues && target.cues.length > 0) {
+                        downloadSubtitleFile(target.cues, `${movie.title}_${target.lang}`, 'srt');
+                        setResumeToast(`📥 Subtítulo .SRT descargado: arrástralo a Google Drive en PC`);
+                      } else {
+                        setIsSubtitleModalOpen(true);
+                      }
+                    }}
+                    className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-full bg-zinc-900/90 hover:bg-zinc-800 text-amber-300 text-xs font-semibold backdrop-blur-md border border-amber-500/40 shadow-xl active:scale-95 cursor-pointer min-h-[40px]"
+                    title="Descargar subtítulo .SRT para arrastrar a Google Drive en PC"
+                  >
+                    <Download className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Descargar .SRT</span>
+                  </button>
+                )}
+
+                {/* Antifiltro Escolar Proxy Toggle (non-Google Drive) */}
+                {!isGoogleDrive && (
+                  <button
+                    onClick={toggleSchoolProxy}
+                    className={`flex items-center gap-1 px-3 py-2 rounded-full text-xs font-semibold backdrop-blur-md border shadow-xl active:scale-95 cursor-pointer min-h-[40px] transition-colors ${
+                      isSchoolProxyActive
+                        ? 'bg-emerald-600/30 text-emerald-300 border-emerald-500/50'
+                        : 'bg-zinc-900/90 hover:bg-zinc-800 text-zinc-400 border-zinc-700/60'
+                    }`}
+                    title={
+                      isSchoolProxyActive
+                        ? 'Antifiltro Escolar ACTIVO: el tráfico pasa por nuestro dominio (P)'
+                        : 'Antifiltro desactivado: conexión directa (P)'
+                    }
+                  >
+                    <ShieldCheck className={`w-3.5 h-3.5 ${isSchoolProxyActive ? 'text-emerald-400' : 'text-zinc-500'}`} />
+                    <span className="hidden lg:inline">
+                      {isSchoolProxyActive ? 'Antifiltro Escolar' : 'Directo'}
+                    </span>
+                  </button>
+                )}
+
+                {/* Cinema Mode Dimming Toggle in Embed */}
+                <button
+                  onClick={toggleDimming}
+                  className={`hidden sm:flex items-center gap-1 px-3 py-2 rounded-full text-xs font-semibold backdrop-blur-md border shadow-xl active:scale-95 cursor-pointer min-h-[40px] transition-colors ${
+                    isDimmed
+                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                      : 'bg-zinc-900/90 hover:bg-zinc-800 text-zinc-300 border-zinc-700/60'
+                  }`}
+                  title={isDimmed ? 'Encender luces (D)' : 'Atenuar luces / Modo Cine (D)'}
+                >
+                  {isDimmed ? <Lightbulb className="w-3.5 h-3.5 text-amber-300" /> : <LightbulbOff className="w-3.5 h-3.5 text-zinc-400" />}
+                  <span className="hidden lg:inline">{isDimmed ? 'Luz ON' : 'Modo Cine'}</span>
+                </button>
+
                 {isGoogleDrive && (
                   <>
                     <button
@@ -937,6 +1401,11 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                       href={parsedSource.directUrl || parsedSource.embedUrl || activeVideoUrl}
                       target="_blank"
                       rel="noreferrer"
+                      onClick={() => {
+                        if (availableTracks.length > 0) {
+                          setResumeToast('💡 Tip PC: Puedes descargar el .SRT y arrastrarlo a la ventana de Drive');
+                        }
+                      }}
                       className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs backdrop-blur-md shadow-2xl active:scale-95 cursor-pointer min-h-[40px] border border-amber-300/50"
                       title="Abrir en Google Drive"
                     >
@@ -1031,6 +1500,9 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   disableRemotePlayback
                   referrerPolicy="no-referrer"
                   onTimeUpdate={handleTimeUpdate}
+                  onSeeked={() => {
+                    if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
+                  }}
                   onLoadedMetadata={handleLoadedMetadata}
                   onLoadStart={() => setIsBuffering(true)}
                   onLoadedData={() => setIsBuffering(false)}
@@ -1039,15 +1511,30 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   onPlaying={() => {
                     setIsBuffering(false);
                     setIsPlaying(true);
+                    if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
                   }}
-                  onPause={() => setIsPlaying(false)}
+                  onPause={() => {
+                    setIsPlaying(false);
+                    if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
+                  }}
                   onError={handleVideoError}
                   onEnded={() => {
                     setIsPlaying(false);
                     setHasEnded(true);
                     setAreControlsVisible(true);
                   }}
-                />
+                >
+                  {vttBlobUrl && (
+                    <track
+                      key={activeSubTrack?.id}
+                      kind="subtitles"
+                      label={activeSubTrack?.label || 'Subtítulos'}
+                      srcLang={activeSubTrack?.lang || 'es'}
+                      src={vttBlobUrl}
+                      default
+                    />
+                  )}
+                </video>
 
                 {/* Double-Tap 10s Feedback Animation Ripples for Mobile */}
                 {!mobileLogic.shouldHideCustomOverlay && doubleTapFeedback?.side === 'left' && (
@@ -1354,24 +1841,40 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
             {/* Subtitles Overlay */}
             {currentSubtitleText && !hasVideoError && (
-              <div className="absolute bottom-16 sm:bottom-20 left-0 right-0 px-4 sm:px-6 text-center pointer-events-none z-20 select-none">
+              <div
+                className={`absolute left-0 right-0 px-4 sm:px-6 text-center pointer-events-none z-30 select-none transition-all duration-300 ${
+                  (subtitleConfig.verticalPosition || 'bottom') === 'top'
+                    ? 'top-16 sm:top-20'
+                    : (subtitleConfig.verticalPosition || 'bottom') === 'drive_safe'
+                    ? 'bottom-20 sm:bottom-28'
+                    : 'bottom-14 sm:bottom-16'
+                }`}
+              >
                 <span
-                  className={`inline-block transition-all ${
+                  className={`inline-block transition-all max-w-[92%] sm:max-w-[80%] leading-relaxed ${
                     subtitleConfig.fontSize === 'sm'
                       ? 'text-xs sm:text-sm'
                       : subtitleConfig.fontSize === 'base'
                       ? 'text-sm sm:text-base'
                       : subtitleConfig.fontSize === 'lg'
                       ? 'text-base sm:text-lg md:text-xl'
-                      : 'text-lg sm:text-xl md:text-2xl font-bold'
+                      : subtitleConfig.fontSize === 'xl'
+                      ? 'text-lg sm:text-xl md:text-2xl font-bold'
+                      : 'text-xl sm:text-2xl md:text-3xl font-extrabold'
                   } ${
-                    subtitleConfig.textColor === 'yellow' ? 'text-yellow-300' : 'text-white'
+                    subtitleConfig.textColor === 'yellow'
+                      ? 'text-yellow-300 drop-shadow-[0_2px_8px_rgba(0,0,0,1)]'
+                      : subtitleConfig.textColor === 'cyan'
+                      ? 'text-cyan-300 drop-shadow-[0_2px_8px_rgba(0,0,0,1)]'
+                      : subtitleConfig.textColor === 'green'
+                      ? 'text-emerald-300 drop-shadow-[0_2px_8px_rgba(0,0,0,1)]'
+                      : 'text-white drop-shadow-[0_2px_8px_rgba(0,0,0,1)]'
                   } ${
                     subtitleConfig.backgroundStyle === 'solid'
-                      ? 'bg-black/85 px-4 py-1.5 rounded-lg border border-white/10 shadow-lg tracking-wide backdrop-blur-sm'
+                      ? 'bg-black/90 px-4 sm:px-6 py-1.5 sm:py-2 rounded-xl border border-white/20 shadow-2xl tracking-wide backdrop-blur-md'
                       : subtitleConfig.backgroundStyle === 'translucent'
-                      ? 'bg-black/45 backdrop-blur-md px-4 py-1.5 rounded-lg shadow-md tracking-wide'
-                      : 'drop-shadow-[0_2px_4px_rgba(0,0,0,1)] tracking-wide font-semibold'
+                      ? 'bg-black/50 backdrop-blur-md px-4 sm:px-6 py-1.5 rounded-xl shadow-xl tracking-wide border border-white/10'
+                      : 'drop-shadow-[0_3px_8px_rgba(0,0,0,1)] tracking-wide font-extrabold'
                   }`}
                 >
                   {currentSubtitleText}
@@ -1479,6 +1982,28 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 <Upload className="w-3.5 h-3.5 text-rose-400" />
                 <span>Fuente de Video</span>
               </button>
+
+              {/* Antifiltro Escolar Proxy Toggle (Dominio Propio) */}
+              {!isGoogleDrive && (
+                <button
+                  onClick={toggleSchoolProxy}
+                  className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
+                    isSchoolProxyActive
+                      ? 'bg-emerald-600/25 text-emerald-300 border-emerald-500/50 shadow-lg shadow-emerald-950/40'
+                      : 'bg-zinc-900/80 hover:bg-zinc-800 text-zinc-400 border-zinc-700/60'
+                  }`}
+                  title={
+                    isSchoolProxyActive
+                      ? 'Antifiltro Escolar ACTIVO: el video se transmite por nuestro dominio (P)'
+                      : 'Antifiltro desactivado: conexión directa (P)'
+                  }
+                >
+                  <ShieldCheck className={`w-3.5 h-3.5 ${isSchoolProxyActive ? 'text-emerald-400' : 'text-zinc-500'}`} />
+                  <span className="hidden md:inline">
+                    {isSchoolProxyActive ? 'Antifiltro Escolar' : 'Directo'}
+                  </span>
+                </button>
+              )}
 
               {/* External link button (Direct Fullscreen / Google Drive) */}
               <a
@@ -1634,6 +2159,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 onClick={() => {
                   if (videoRef.current) {
                     videoRef.current.currentTime = 0;
+                    setCurrentTime(0);
                     const p = videoRef.current.play();
                     if (p !== undefined) {
                       p.then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
@@ -1966,15 +2492,78 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
                 {/* Theater Mode Toggle (Desktop only) */}
                 <button
-                  onClick={() => setIsTheaterMode(!isTheaterMode)}
-                  className={`hidden sm:flex p-1.5 sm:p-2 rounded-xl transition-colors ${
+                  onClick={toggleTheaterMode}
+                  className={`hidden sm:flex p-1.5 sm:p-2 rounded-xl transition-colors cursor-pointer ${
                     isTheaterMode
-                      ? 'bg-amber-500/20 text-amber-300'
+                      ? 'bg-rose-600/30 text-rose-300 border border-rose-500/40'
                       : 'text-zinc-300 hover:text-white hover:bg-zinc-800'
                   }`}
-                  title={isTheaterMode ? 'Salir de modo cine' : 'Modo Cine'}
+                  title={isTheaterMode ? 'Salir de modo cine (T)' : 'Modo Cine (T)'}
                 >
                   <Film className="w-4 h-4" />
+                </button>
+
+                {/* Ambient Dimming Toggle (Modo Cine Luces) */}
+                <button
+                  onClick={toggleDimming}
+                  className={`hidden sm:flex p-1.5 sm:p-2 rounded-xl transition-colors cursor-pointer ${
+                    isDimmed
+                      ? 'bg-amber-500/25 text-amber-300 border border-amber-500/40'
+                      : 'text-zinc-400 hover:text-amber-300 hover:bg-zinc-800'
+                  }`}
+                  title={isDimmed ? 'Encender luces (D)' : 'Atenuar luces / Modo Cine suave (D)'}
+                >
+                  {isDimmed ? <Lightbulb className="w-4 h-4 text-amber-300" /> : <LightbulbOff className="w-4 h-4 text-zinc-400" />}
+                </button>
+
+                {/* School Anti-Filter Proxy Toggle (Dominio Propio) */}
+                {!isGoogleDrive && (
+                  <button
+                    onClick={toggleSchoolProxy}
+                    className={`hidden md:flex p-1.5 sm:p-2 rounded-xl transition-colors cursor-pointer ${
+                      isSchoolProxyActive
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+                    }`}
+                    title={
+                      isSchoolProxyActive
+                        ? 'Antifiltro Escolar ACTIVO: video transmitido por nuestro dominio (P)'
+                        : 'Antifiltro desactivado: conexión directa (P)'
+                    }
+                  >
+                    <ShieldCheck className={`w-4 h-4 ${isSchoolProxyActive ? 'text-emerald-400' : 'text-zinc-400'}`} />
+                  </button>
+                )}
+
+                {/* Sincronizar y Pasar a Móvil (Código QR instantáneo) */}
+                {onOpenSync && (
+                  <button
+                    onClick={() => {
+                      const activeEp = hasEpisodes ? episodesList[currentEpisodeIndex] : undefined;
+                      onOpenSync({
+                        movieId: movie.id,
+                        title: movie.title,
+                        currentTime: videoRef.current?.currentTime || currentTime,
+                        duration: videoRef.current?.duration || duration,
+                        episodeId: activeEp?.id,
+                        episodeTitle: activeEp?.title,
+                      });
+                    }}
+                    className="flex items-center gap-1.5 p-1.5 sm:p-2 rounded-xl bg-zinc-900/80 hover:bg-rose-950/40 text-zinc-300 hover:text-rose-300 border border-zinc-700/60 hover:border-rose-500/50 transition-colors cursor-pointer text-xs font-semibold"
+                    title="Pasar a mi Móvil: Continuar viendo en tu celular con código QR"
+                  >
+                    <QrCode className="w-4 h-4 text-rose-400" />
+                    <span className="hidden lg:inline text-[11px]">Pasar a Móvil</span>
+                  </button>
+                )}
+
+                {/* PC Keyboard Shortcuts Modal Trigger */}
+                <button
+                  onClick={() => setShowShortcutsModal(true)}
+                  className="hidden md:flex p-1.5 sm:p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+                  title="Atajos de teclado para PC (?)"
+                >
+                  <Keyboard className="w-4 h-4" />
                 </button>
 
                 {/* Fullscreen Toggle */}
@@ -2206,6 +2795,29 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
               {/* Quick Actions (Fullscreen, Mute, Source) */}
               <div className="pt-2 border-t border-zinc-800 space-y-2">
+                {!isGoogleDrive && (
+                  <button
+                    onClick={() => {
+                      toggleSchoolProxy();
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border text-xs font-semibold transition-colors cursor-pointer ${
+                      isSchoolProxyActive
+                        ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/40'
+                        : 'bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 border-zinc-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className={`w-4 h-4 ${isSchoolProxyActive ? 'text-emerald-400' : 'text-zinc-400'}`} />
+                      <span>Antifiltro Escolar (Proxy)</span>
+                    </div>
+                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                      isSchoolProxyActive ? 'bg-emerald-500/30 text-emerald-200' : 'bg-zinc-700 text-zinc-400'
+                    }`}>
+                      {isSchoolProxyActive ? 'ACTIVO' : 'DIRECTO'}
+                    </span>
+                  </button>
+                )}
+
                 <button
                   onClick={() => {
                     toggleFullscreen();
@@ -2242,7 +2854,111 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           onAddCustomTrack={(newTrack) => {
             setCustomTracks((prev) => [...prev, newTrack]);
           }}
+          currentTime={effectiveCurrentTime}
+          onSeekToTime={(time) => {
+            if (isUsingEmbed) {
+              setDriveSubtitleTime(time);
+            } else if (videoRef.current) {
+              videoRef.current.currentTime = time;
+              setCurrentTime(time);
+            }
+          }}
         />
+
+        {/* PC Keyboard Shortcuts Modal */}
+        {showShortcutsModal && (
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in pointer-events-auto">
+            <div className="w-full max-w-md bg-zinc-900 border border-zinc-700/80 rounded-2xl p-5 shadow-2xl text-zinc-100">
+              <div className="flex items-center justify-between pb-3 border-b border-zinc-800 mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-rose-600/20 text-rose-400 border border-rose-500/30">
+                    <Keyboard className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-white">Atajos de Teclado para PC</h3>
+                    <p className="text-[10px] text-zinc-400">Control total para CineStream y enlaces externos</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowShortcutsModal(false)}
+                  className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-2 text-xs divide-y divide-zinc-800/60 max-h-[60vh] overflow-y-auto pr-1">
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-zinc-300">Reproducir / Pausar (Nativo o Subtítulos Drive)</span>
+                  <div className="flex gap-1">
+                    <kbd className="px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded font-mono text-white text-[11px]">Espacio</kbd>
+                    <kbd className="px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded font-mono text-white text-[11px]">K</kbd>
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-zinc-300">Pantalla Completa</span>
+                  <kbd className="px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded font-mono text-white text-[11px]">F</kbd>
+                </div>
+
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-zinc-300">Modo Cine (Expandir pantalla)</span>
+                  <kbd className="px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded font-mono text-white text-[11px]">T</kbd>
+                </div>
+
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-zinc-300">Atenuación de Luces (Dimming suave)</span>
+                  <kbd className="px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded font-mono text-white text-[11px]">D</kbd>
+                </div>
+
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-zinc-300">Activar / Desactivar Subtítulos</span>
+                  <kbd className="px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded font-mono text-white text-[11px]">C</kbd>
+                </div>
+
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-zinc-300">Ajustar Desfase Subtítulos (-0.5s / +0.5s)</span>
+                  <div className="flex gap-1">
+                    <kbd className="px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded font-mono text-white text-[11px]">[</kbd>
+                    <kbd className="px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded font-mono text-white text-[11px]">]</kbd>
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-zinc-300">Silenciar / Activar Audio</span>
+                  <kbd className="px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded font-mono text-white text-[11px]">M</kbd>
+                </div>
+
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-zinc-300">Retroceder / Avanzar 10 segundos</span>
+                  <div className="flex gap-1">
+                    <kbd className="px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded font-mono text-white text-[11px]">←</kbd>
+                    <kbd className="px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded font-mono text-white text-[11px]">→</kbd>
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-zinc-300">Antifiltro Escolar (Bypass Media Player)</span>
+                  <kbd className="px-2 py-0.5 bg-emerald-950/80 border border-emerald-700/60 rounded font-mono text-emerald-300 text-[11px]">P</kbd>
+                </div>
+
+                <div className="flex justify-between items-center py-2">
+                  <span className="text-zinc-300">Ver / Ocultar esta guía de atajos</span>
+                  <kbd className="px-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded font-mono text-white text-[11px]">?</kbd>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-zinc-800 flex justify-end">
+                <button
+                  onClick={() => setShowShortcutsModal(false)}
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs cursor-pointer"
+                >
+                  Entendido
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Hidden Local Subtitle File Picker (.srt / .vtt) */}
         <input

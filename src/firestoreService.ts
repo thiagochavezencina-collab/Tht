@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   setDoc,
+  getDoc,
   updateDoc,
   deleteDoc,
   getDocs,
@@ -11,11 +12,12 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { Movie, UserReview, MovieSuggestion } from './types';
+import { Movie, UserReview, MovieSuggestion, SyncSession } from './types';
 
 const CUSTOM_MOVIES_COLLECTION = 'custom_movies';
 const REVIEWS_COLLECTION = 'movie_reviews';
 const SUGGESTIONS_COLLECTION = 'movie_suggestions';
+const SYNC_SESSIONS_COLLECTION = 'sync_sessions';
 
 /**
  * Recursively cleans an object for Firestore by removing any keys with `undefined` values.
@@ -58,6 +60,16 @@ function prepareMovieForFirestore(movie: Movie): Record<string, any> {
   const safeEpisodes = Array.isArray(movie.episodes)
     ? movie.episodes.map((ep) => {
         const isBlobEp = typeof ep.videoUrl === 'string' && ep.videoUrl.startsWith('blob:');
+        const safeEpSubtitles = Array.isArray(ep.subtitles)
+          ? ep.subtitles.map((sub) => ({
+              id: sub.id || `sub-${Date.now()}`,
+              lang: sub.lang || 'es',
+              label: sub.label || 'Español',
+              url: typeof sub.url === 'string' && sub.url.startsWith('blob:') ? '' : sub.url || '',
+              fileName: sub.fileName || '',
+              cues: Array.isArray(sub.cues) ? sub.cues : [],
+            }))
+          : undefined;
         return {
           id: ep.id,
           title: ep.title || `Episodio ${ep.episodeNumber}`,
@@ -68,6 +80,7 @@ function prepareMovieForFirestore(movie: Movie): Record<string, any> {
           fileName: ep.fileName || '',
           description: ep.description || '',
           thumbnailUrl: ep.thumbnailUrl || '',
+          ...(safeEpSubtitles ? { subtitles: safeEpSubtitles } : {}),
         };
       })
     : undefined;
@@ -171,8 +184,14 @@ export async function getCustomMoviesFromFirestore(): Promise<Movie[]> {
         posterUrl: data.posterUrl || '',
         backdropUrl: data.backdropUrl || '',
         videoUrl: data.videoUrl || '',
-        episodes: data.episodes || undefined,
+        episodes: Array.isArray(data.episodes)
+          ? data.episodes.map((ep: any) => ({
+              ...ep,
+              subtitles: Array.isArray(ep.subtitles) ? ep.subtitles : undefined,
+            }))
+          : undefined,
         seasonsCount: data.seasonsCount || undefined,
+        subtitles: Array.isArray(data.subtitles) ? data.subtitles : undefined,
         quality: data.quality || 'Full HD 1080p',
         viewsCount: data.viewsCount || 1,
         addedByUser: true,
@@ -215,8 +234,14 @@ export function subscribeToCustomMovies(onUpdate: (movies: Movie[]) => void): ()
             posterUrl: data.posterUrl || '',
             backdropUrl: data.backdropUrl || '',
             videoUrl: data.videoUrl || '',
-            episodes: data.episodes || undefined,
+            episodes: Array.isArray(data.episodes)
+              ? data.episodes.map((ep: any) => ({
+                  ...ep,
+                  subtitles: Array.isArray(ep.subtitles) ? ep.subtitles : undefined,
+                }))
+              : undefined,
             seasonsCount: data.seasonsCount || undefined,
+            subtitles: Array.isArray(data.subtitles) ? data.subtitles : undefined,
             quality: data.quality || 'Full HD 1080p',
             viewsCount: data.viewsCount || 1,
             addedByUser: true,
@@ -456,3 +481,121 @@ export function subscribeToSuggestions(onUpdate: (suggestions: MovieSuggestion[]
     return () => {};
   }
 }
+
+/**
+ * Generate a friendly alphanumeric 6-character sync code (e.g. CS-7K2M9P)
+ */
+export function generateSyncCode(): string {
+  const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // Exclude ambiguous chars like 0/O, 1/I
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
+/**
+ * Save a temporary QR sync session to Firestore (lasts 30 minutes)
+ */
+export async function createSyncSessionInFirestore(
+  code: string,
+  sessionPayload: {
+    watchlist: string[];
+    watchProgress: string;
+    currentPlaying?: any;
+    deviceOrigin?: string;
+  }
+): Promise<SyncSession> {
+  const now = Date.now();
+  const expiresAt = now + 30 * 60 * 1000; // 30 minutes
+
+  const sessionObj: SyncSession = {
+    id: code.toUpperCase(),
+    createdAt: now,
+    expiresAt,
+    watchlist: sessionPayload.watchlist || [],
+    watchProgress: sessionPayload.watchProgress || '{}',
+    currentPlaying: sessionPayload.currentPlaying || null,
+    status: 'pending',
+    deviceOrigin: sessionPayload.deviceOrigin || 'laptop',
+  };
+
+  try {
+    const docRef = doc(db, SYNC_SESSIONS_COLLECTION, sessionObj.id);
+    await setDoc(docRef, sanitizeForFirestore(sessionObj));
+  } catch (err) {
+    console.warn('Could not save sync session to Firestore (fallback to direct URL payload):', err);
+  }
+
+  return sessionObj;
+}
+
+/**
+ * Fetch a sync session by code from Firestore
+ */
+export async function getSyncSessionFromFirestore(code: string): Promise<SyncSession | null> {
+  try {
+    const cleanCode = code.trim().toUpperCase();
+    const docRef = doc(db, SYNC_SESSIONS_COLLECTION, cleanCode);
+    const docSnap = await getDoc(docRef);
+
+    if (docSnap.exists()) {
+      const data = docSnap.data() as SyncSession;
+      // Check expiration
+      if (data.expiresAt && data.expiresAt < Date.now()) {
+        return null;
+      }
+      return data;
+    }
+    return null;
+  } catch (err) {
+    console.warn('Error reading sync session from Firestore:', err);
+    return null;
+  }
+}
+
+/**
+ * Mark a sync session as transferred once mobile device has consumed it
+ */
+export async function markSyncSessionTransferredInFirestore(code: string): Promise<void> {
+  try {
+    const cleanCode = code.trim().toUpperCase();
+    const docRef = doc(db, SYNC_SESSIONS_COLLECTION, cleanCode);
+    await updateDoc(docRef, {
+      status: 'transferred',
+      transferredAt: Date.now(),
+    });
+  } catch (err) {
+    console.warn('Could not mark sync session as transferred in Firestore:', err);
+  }
+}
+
+/**
+ * Subscribe to sync session status changes (e.g. to notify laptop when mobile scans it)
+ */
+export function subscribeToSyncSession(
+  code: string,
+  onUpdate: (session: SyncSession | null) => void
+): () => void {
+  try {
+    const cleanCode = code.trim().toUpperCase();
+    const docRef = doc(db, SYNC_SESSIONS_COLLECTION, cleanCode);
+    return onSnapshot(
+      docRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          onUpdate(docSnap.data() as SyncSession);
+        } else {
+          onUpdate(null);
+        }
+      },
+      (err) => {
+        console.warn('Sync session listener notice:', err.message);
+      }
+    );
+  } catch (err) {
+    console.warn('Failed to attach sync session listener:', err);
+    return () => {};
+  }
+}
+

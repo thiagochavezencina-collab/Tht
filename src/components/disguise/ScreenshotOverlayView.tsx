@@ -95,10 +95,11 @@ export const ScreenshotOverlayView: React.FC<ScreenshotOverlayViewProps> = ({
       const base64 = event.target?.result as string;
       if (base64) {
         setCustomImage(base64);
-        setActivePreset('custom');
         try {
           localStorage.setItem(CUSTOM_DISGUISE_IMAGE_KEY, base64);
         } catch {}
+        // When photo is added, do not show panic button, show interactive ALEKS screen!
+        onSwitchToInteractive();
       }
     };
     reader.readAsDataURL(file);
@@ -395,16 +396,7 @@ export const ScreenshotOverlayView: React.FC<ScreenshotOverlayViewProps> = ({
         )}
       </div>
 
-      {/* Floating Discreet Settings Trigger in Bottom Corner */}
-      <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2">
-        <button
-          onClick={() => setShowControls(!showControls)}
-          className="bg-black/60 hover:bg-black/80 text-white/70 hover:text-white backdrop-blur-md p-2 rounded-full border border-white/10 shadow-lg transition-all"
-          title="Ajustes de Camuflaje"
-        >
-          <SlidersHorizontal className="w-4 h-4" />
-        </button>
-      </div>
+      {/* No floating panic button is displayed over the disguise */}
 
       {/* Floating Control Panel (Appears when tapping gear) */}
       {showControls && (

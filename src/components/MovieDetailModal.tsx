@@ -18,6 +18,7 @@ import {
   Smartphone,
   Upload,
   Globe,
+  Lock,
 } from 'lucide-react';
 import { Movie, UserReview, WatchProgress } from '../types';
 
@@ -32,6 +33,7 @@ interface MovieDetailModalProps {
   progress?: WatchProgress;
   onEdit?: (movie: Movie) => void;
   onDelete?: (movie: Movie) => void;
+  isAdmin?: boolean;
 }
 
 export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
@@ -45,6 +47,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   progress,
   onEdit,
   onDelete,
+  isAdmin = false,
 }) => {
   const [userRating, setUserRating] = useState<number>(5);
   const [commentText, setCommentText] = useState<string>('');
@@ -206,16 +209,17 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
               {onDelete && (
                 <button
                   onClick={() => {
-                    if (confirm(`¿Estás seguro de que deseas eliminar "${movie.title}"?`)) {
-                      onDelete(movie);
-                      onClose();
-                    }
+                    onDelete(movie);
                   }}
-                  className="flex items-center gap-1.5 px-4 py-3 rounded-xl bg-rose-950/60 hover:bg-rose-900 border border-rose-800/80 text-rose-300 font-semibold text-xs sm:text-sm transition-all"
-                  title="Eliminar de la plataforma"
+                  className={`flex items-center gap-1.5 px-4 py-3 rounded-xl border text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+                    isAdmin
+                      ? 'bg-rose-950/60 hover:bg-rose-900 border-rose-800/80 text-rose-300'
+                      : 'bg-zinc-900/90 hover:bg-zinc-800 border-zinc-700 text-zinc-300 hover:text-white'
+                  }`}
+                  title={isAdmin ? 'Eliminar de la plataforma' : 'Eliminar película (Requiere PIN de Administrador)'}
                 >
-                  <Trash2 className="w-4 h-4" />
-                  <span className="hidden sm:inline">Eliminar</span>
+                  {isAdmin ? <Trash2 className="w-4 h-4 text-rose-400" /> : <Lock className="w-4 h-4 text-amber-400" />}
+                  <span className="hidden sm:inline">{isAdmin ? 'Eliminar' : 'Eliminar (Admin)'}</span>
                 </button>
               )}
             </div>

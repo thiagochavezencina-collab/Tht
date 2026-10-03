@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   Subtitles,
   Upload,
@@ -11,6 +11,12 @@ import {
   Sparkles,
   Sliders,
   AlertCircle,
+  Download,
+  Monitor,
+  MoveVertical,
+  ListOrdered,
+  Search,
+  Play,
 } from 'lucide-react';
 import { SubtitleTrack } from '../types';
 import {
@@ -18,15 +24,17 @@ import {
   loadSubtitlesFromUrl,
   generateAiSubtitles,
   detectSubtitleLanguage,
+  downloadSubtitleFile,
   SubtitleCue,
 } from '../utils/subtitleHelper';
 
 export interface SubtitleConfig {
   trackId: string; // 'off' or track id or lang
   offsetSeconds: number; // e.g. -0.5 or +0.5
-  fontSize: 'sm' | 'base' | 'lg' | 'xl';
-  textColor: 'white' | 'yellow';
+  fontSize: 'sm' | 'base' | 'lg' | 'xl' | '2xl';
+  textColor: 'white' | 'yellow' | 'cyan' | 'green';
   backgroundStyle: 'solid' | 'translucent' | 'shadow';
+  verticalPosition?: 'bottom' | 'drive_safe' | 'top';
 }
 
 interface SubtitleModalProps {
@@ -37,7 +45,16 @@ interface SubtitleModalProps {
   config: SubtitleConfig;
   onConfigChange: (newConfig: SubtitleConfig) => void;
   onAddCustomTrack: (track: SubtitleTrack) => void;
+  onSeekToTime?: (time: number) => void;
+  currentTime?: number;
 }
+
+const formatCueTime = (seconds: number) => {
+  const s = Math.max(0, Math.floor(seconds));
+  const mins = Math.floor(s / 60);
+  const secs = s % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+};
 
 export const SubtitleModal: React.FC<SubtitleModalProps> = ({
   isOpen,
@@ -47,23 +64,31 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
   config,
   onConfigChange,
   onAddCustomTrack,
+  onSeekToTime,
+  currentTime = 0,
 }) => {
-  const [activeTab, setActiveTab] = useState<'tracks' | 'sync' | 'style'>('tracks');
+  const [activeTab, setActiveTab] = useState<'tracks' | 'sync' | 'style' | 'preview'>('tracks');
   const [urlInput, setUrlInput] = useState('');
   const [urlLang, setUrlLang] = useState('es');
   const [urlLabel, setUrlLabel] = useState('Español (Enlace)');
   const [isLoadingUrl, setIsLoadingUrl] = useState(false);
+  const [searchPreviewQuery, setSearchPreviewQuery] = useState('');
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
   );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const activeTrack = useMemo(() => {
+    if (config.trackId === 'off') return null;
+    return availableTracks.find((t) => t.id === config.trackId || t.lang === config.trackId) || null;
+  }, [availableTracks, config.trackId]);
+
   if (!isOpen) return null;
 
   const showNotification = (type: 'success' | 'error', text: string) => {
     setFeedbackMsg({ type, text });
-    setTimeout(() => setFeedbackMsg(null), 4000);
+    setTimeout(() => setFeedbackMsg(null), 5000);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -73,7 +98,7 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
     try {
       const { fileName, cues } = await readSubtitleFile(file);
       if (cues.length === 0) {
-        showNotification('error', 'El archivo no contiene marcas de tiempo o subtítulos válidos.');
+        showNotification('error', 'El archivo no contiene marcas de tiempo o subtítulos válidos (.srt, .vtt, .ass).');
         return;
       }
 
@@ -92,12 +117,14 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
         ...config,
         trackId: newTrack.id,
       });
+
+      const firstTimeStr = formatCueTime(cues[0].start);
       showNotification(
         'success',
-        `✨ Idioma detectado automáticamente: ${detected.flag} ${detected.languageName} (${detected.confidence}%). Pista asignada al reproductor (${cues.length} líneas).`
+        `✨ Subtítulo cargado: ${cues.length} líneas detectadas (${detected.flag} ${detected.languageName}). Primer diálogo a los ${firstTimeStr}. Pista activada.`
       );
     } catch (err: any) {
-      showNotification('error', err?.message || 'Error al procesar el archivo .srt / .vtt');
+      showNotification('error', err?.message || 'Error al procesar el archivo de subtítulos');
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
@@ -232,6 +259,18 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
             <Palette className="w-3.5 h-3.5" />
             <span>Estilo & Tamaño</span>
           </button>
+          <button
+            id="tab-subtitles-preview"
+            onClick={() => setActiveTab('preview')}
+            className={`flex items-center gap-1.5 py-3 px-3 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+              activeTab === 'preview'
+                ? 'border-rose-500 text-rose-400'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <ListOrdered className="w-3.5 h-3.5" />
+            <span>Líneas & Verificación {activeTrack?.cues ? `(${activeTrack.cues.length})` : ''}</span>
+          </button>
         </div>
 
         {/* Notification Toast */}
@@ -257,6 +296,17 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
           {/* TAB 1: TRACKS & FILE UPLOAD */}
           {activeTab === 'tracks' && (
             <div className="space-y-4">
+              {/* Google Drive & PC Tip */}
+              <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-500/30 flex items-start gap-3">
+                <Monitor className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-[11px] text-zinc-300 space-y-1">
+                  <span className="font-bold text-amber-300 block">Subtítulos para PC y Google Drive:</span>
+                  <p className="text-zinc-400 leading-snug">
+                    CineStream proyecta subtítulos flotantes de alta legibilidad sobre el reproductor (incluso con enlaces de Google Drive). También puedes hacer clic en <Download className="inline w-3 h-3 text-rose-400" /> para descargar el archivo <b>.SRT</b> y arrastrarlo directo al reproductor de Drive en PC.
+                  </p>
+                </div>
+              </div>
+
               <div>
                 <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider block mb-2">
                   Pistas Disponibles
@@ -290,17 +340,19 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
                     const isSelected = config.trackId === track.id || config.trackId === track.lang;
                     const cueCount = track.cues?.length || 0;
                     return (
-                      <button
+                      <div
                         key={track.id}
-                        id={`track-option-${track.id}`}
-                        onClick={() => onConfigChange({ ...config, trackId: track.id })}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
                           isSelected
                             ? 'bg-rose-600/20 border-rose-500 text-white font-semibold shadow-md shadow-rose-950/20'
-                            : 'bg-zinc-800/50 border-zinc-700/60 text-zinc-300 hover:bg-zinc-800'
+                            : 'bg-zinc-800/50 border-zinc-700/60 text-zinc-300 hover:bg-zinc-850'
                         }`}
                       >
-                        <div className="flex items-center gap-2.5 truncate">
+                        <button
+                          id={`track-option-${track.id}`}
+                          onClick={() => onConfigChange({ ...config, trackId: track.id })}
+                          className="flex items-center gap-2.5 truncate flex-1 text-left cursor-pointer mr-2"
+                        >
                           <div
                             className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center flex-shrink-0 ${
                               isSelected ? 'border-rose-400 bg-rose-500' : 'border-zinc-500'
@@ -314,7 +366,8 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
                               <span className="text-[10px] text-zinc-400 block truncate">{track.fileName}</span>
                             )}
                           </div>
-                        </div>
+                        </button>
+
                         <div className="flex items-center gap-2 flex-shrink-0">
                           {cueCount > 0 && (
                             <span className="text-[10px] bg-zinc-800 px-2 py-0.5 rounded text-zinc-400 border border-zinc-700">
@@ -324,8 +377,25 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
                           <span className="text-[10px] uppercase font-bold text-rose-400 bg-rose-950/60 border border-rose-800/60 px-1.5 py-0.5 rounded">
                             {track.lang}
                           </span>
+                          {cueCount > 0 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                downloadSubtitleFile(track.cues || [], `${movieTitle}_${track.lang}`, 'srt');
+                                setFeedbackMsg({
+                                  type: 'success',
+                                  text: `📥 Descargado archivo .SRT (${track.label}) para Google Drive / PC.`,
+                                });
+                              }}
+                              className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 transition-colors cursor-pointer"
+                              title="Descargar archivo .SRT para Google Drive en PC"
+                            >
+                              <Download className="w-3.5 h-3.5 text-rose-400" />
+                            </button>
+                          )}
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -482,6 +552,19 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
                   +0.1s (Fino)
                 </button>
               </div>
+
+              {/* PC Keyboard Shortcut Tip for Sync */}
+              <div className="p-3 rounded-xl bg-zinc-950/90 border border-zinc-800 flex items-center justify-between text-xs text-zinc-400">
+                <span className="flex items-center gap-1.5 font-medium text-zinc-300">
+                  <Clock className="w-3.5 h-3.5 text-rose-400" />
+                  Atajos rápidos PC:
+                </span>
+                <span className="font-mono text-[11px] text-zinc-300">
+                  <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-white">[</kbd> -0.5s &nbsp;
+                  <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-white">]</kbd> +0.5s &nbsp;
+                  <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-white">C</kbd> On/Off
+                </span>
+              </div>
             </div>
           )}
 
@@ -502,15 +585,23 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
                         ? 'text-sm'
                         : config.fontSize === 'lg'
                         ? 'text-base sm:text-lg'
-                        : 'text-lg sm:text-xl'
+                        : config.fontSize === 'xl'
+                        ? 'text-lg sm:text-xl'
+                        : 'text-xl sm:text-2xl font-bold'
                     } ${
-                      config.textColor === 'yellow' ? 'text-yellow-300' : 'text-white'
+                      config.textColor === 'yellow'
+                        ? 'text-yellow-300'
+                        : config.textColor === 'cyan'
+                        ? 'text-cyan-300'
+                        : config.textColor === 'green'
+                        ? 'text-emerald-300'
+                        : 'text-white'
                     } ${
                       config.backgroundStyle === 'solid'
-                        ? 'bg-black/90 px-4 py-1.5 rounded-lg border border-white/10 shadow-lg'
+                        ? 'bg-black/90 px-4 py-1.5 rounded-lg border border-white/10 shadow-xl backdrop-blur-sm'
                         : config.backgroundStyle === 'translucent'
                         ? 'bg-black/40 backdrop-blur-sm px-4 py-1 rounded-lg shadow-md'
-                        : 'drop-shadow-[0_2px_4px_rgba(0,0,0,1)] font-semibold'
+                        : 'drop-shadow-[0_2px_8px_rgba(0,0,0,1)] font-semibold'
                     }`}
                   >
                     Este es un ejemplo de subtítulo en CineStream
@@ -521,25 +612,53 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
               {/* Font Size Selector */}
               <div>
                 <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider block mb-2">
-                  Tamaño de Texto
+                  Tamaño de Texto (Optimizado para PC)
                 </label>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
                   {[
                     { id: 'sm', label: 'Pequeño' },
                     { id: 'base', label: 'Normal' },
                     { id: 'lg', label: 'Grande' },
                     { id: 'xl', label: 'X-Grande' },
+                    { id: '2xl', label: '2X (PC)' },
                   ].map((sz) => (
                     <button
                       key={sz.id}
                       onClick={() => onConfigChange({ ...config, fontSize: sz.id as any })}
-                      className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                      className={`py-2 px-1 rounded-xl text-[11px] sm:text-xs font-semibold border transition-all cursor-pointer ${
                         config.fontSize === sz.id
                           ? 'bg-rose-600 text-white border-rose-500 shadow-md'
                           : 'bg-zinc-800/80 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
                       }`}
                     >
                       {sz.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Position Selector (Vertical) */}
+              <div>
+                <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider block mb-2">
+                  Posición Vertical en Pantalla
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'bottom', label: 'Inferior Normal', desc: 'Abajo' },
+                    { id: 'drive_safe', label: 'Elevado (Drive)', desc: 'Evita barra Drive' },
+                    { id: 'top', label: 'Superior', desc: 'Arriba' },
+                  ].map((pos) => (
+                    <button
+                      key={pos.id}
+                      onClick={() => onConfigChange({ ...config, verticalPosition: pos.id as any })}
+                      className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer flex flex-col items-center justify-center ${
+                        (config.verticalPosition || 'drive_safe') === pos.id
+                          ? 'bg-rose-600 text-white border-rose-500 shadow-md'
+                          : 'bg-zinc-800/80 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
+                      }`}
+                    >
+                      <span>{pos.label}</span>
+                      <span className="text-[10px] opacity-75 font-normal">{pos.desc}</span>
                     </button>
                   ))}
                 </div>
@@ -552,9 +671,9 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
                 </label>
                 <div className="grid grid-cols-3 gap-2">
                   {[
-                    { id: 'solid', label: 'Fondo Negro' },
-                    { id: 'translucent', label: 'Translúcido' },
-                    { id: 'shadow', label: 'Sin Fondo (Sombra)' },
+                    { id: 'solid', label: 'Fondo Negro Sólido' },
+                    { id: 'translucent', label: 'Translúcido (Blur)' },
+                    { id: 'shadow', label: 'Sin Fondo (Sombra PC)' },
                   ].map((bg) => (
                     <button
                       key={bg.id}
@@ -576,31 +695,157 @@ export const SubtitleModal: React.FC<SubtitleModalProps> = ({
                 <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider block mb-2">
                   Color del Texto
                 </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => onConfigChange({ ...config, textColor: 'white' })}
-                    className={`py-2.5 px-3 rounded-xl text-xs font-semibold border flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                      config.textColor === 'white'
-                        ? 'bg-rose-600 text-white border-rose-500 shadow-md'
-                        : 'bg-zinc-800/80 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
-                    }`}
-                  >
-                    <div className="w-3.5 h-3.5 rounded-full bg-white border border-zinc-400" />
-                    <span>Blanco Clásico</span>
-                  </button>
-                  <button
-                    onClick={() => onConfigChange({ ...config, textColor: 'yellow' })}
-                    className={`py-2.5 px-3 rounded-xl text-xs font-semibold border flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                      config.textColor === 'yellow'
-                        ? 'bg-rose-600 text-white border-rose-500 shadow-md'
-                        : 'bg-zinc-800/80 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
-                    }`}
-                  >
-                    <div className="w-3.5 h-3.5 rounded-full bg-yellow-300 border border-yellow-500" />
-                    <span>Amarillo Cine</span>
-                  </button>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { id: 'white', label: 'Blanco', colorClass: 'bg-white border-zinc-400' },
+                    { id: 'yellow', label: 'Amarillo Cine', colorClass: 'bg-yellow-300 border-yellow-500' },
+                    { id: 'cyan', label: 'Cian Neón', colorClass: 'bg-cyan-300 border-cyan-500' },
+                    { id: 'green', label: 'Verde Cine', colorClass: 'bg-emerald-300 border-emerald-500' },
+                  ].map((col) => (
+                    <button
+                      key={col.id}
+                      onClick={() => onConfigChange({ ...config, textColor: col.id as any })}
+                      className={`py-2 px-2.5 rounded-xl text-xs font-semibold border flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        config.textColor === col.id
+                          ? 'bg-rose-600 text-white border-rose-500 shadow-md'
+                          : 'bg-zinc-800/80 text-zinc-300 border-zinc-700 hover:bg-zinc-750'
+                      }`}
+                    >
+                      <div className={`w-3 h-3 rounded-full border ${col.colorClass}`} />
+                      <span className="truncate">{col.label}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* TAB 4: PREVIEW & VERIFICATION */}
+          {activeTab === 'preview' && (
+            <div className="space-y-4">
+              {!activeTrack || !activeTrack.cues || activeTrack.cues.length === 0 ? (
+                <div className="p-6 rounded-2xl bg-zinc-950/70 border border-zinc-800 text-center space-y-3">
+                  <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
+                  <h4 className="text-sm font-bold text-white">No hay subtítulos activos para visualizar</h4>
+                  <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+                    Selecciona una pista activa o sube tu archivo <b>.srt</b> o <b>.vtt</b> en la pestaña <b>"Pistas & Archivo"</b> para verificar sus líneas y saltar directamente al diálogo.
+                  </p>
+                  <button
+                    onClick={() => setActiveTab('tracks')}
+                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs transition-colors cursor-pointer"
+                  >
+                    Ir a Pistas & Archivo
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {/* Status Banner */}
+                  <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between text-xs">
+                    <div>
+                      <span className="font-bold text-white block">{activeTrack.label}</span>
+                      <span className="text-[11px] text-zinc-400">
+                        {activeTrack.cues.length} líneas de diálogo • Primer diálogo:{' '}
+                        <b className="text-rose-400">{formatCueTime(activeTrack.cues[0].start)}</b>
+                      </span>
+                    </div>
+                    {onSeekToTime && activeTrack.cues.length > 0 && (
+                      <button
+                        onClick={() => {
+                          onSeekToTime(activeTrack.cues![0].start);
+                          showNotification(
+                            'success',
+                            `Saltando al primer diálogo (${formatCueTime(activeTrack.cues![0].start)})...`
+                          );
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs transition-colors cursor-pointer shadow-md"
+                        title="Ir al inicio de los diálogos en el video"
+                      >
+                        <Play className="w-3 h-3 fill-white" />
+                        <span>Ir al 1er diálogo</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Search filter */}
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Buscar palabra o frase en los subtítulos..."
+                      value={searchPreviewQuery}
+                      onChange={(e) => setSearchPreviewQuery(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-zinc-950 border border-zinc-700/80 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-rose-500"
+                    />
+                  </div>
+
+                  {/* Cues List */}
+                  <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1 ios-scrollable">
+                    {(() => {
+                      const filtered = searchPreviewQuery.trim()
+                        ? activeTrack.cues.filter((c) =>
+                            c.text.toLowerCase().includes(searchPreviewQuery.toLowerCase())
+                          )
+                        : activeTrack.cues;
+
+                      if (filtered.length === 0) {
+                        return (
+                          <div className="text-center py-6 text-zinc-500 text-xs">
+                            No se encontraron diálogos que coincidan con "{searchPreviewQuery}".
+                          </div>
+                        );
+                      }
+
+                      return filtered.slice(0, 100).map((cue, idx) => {
+                        const isCurrent =
+                          currentTime >= cue.start && currentTime <= cue.end;
+                        return (
+                          <div
+                            key={idx}
+                            className={`p-2.5 rounded-xl border text-xs flex items-start justify-between gap-3 transition-colors ${
+                              isCurrent
+                                ? 'bg-rose-950/40 border-rose-500 text-white'
+                                : 'bg-zinc-950/50 border-zinc-800 text-zinc-300 hover:border-zinc-700'
+                            }`}
+                          >
+                            <div className="flex-1 space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-[10px] text-rose-400 bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-800/50">
+                                  {formatCueTime(cue.start)} → {formatCueTime(cue.end)}
+                                </span>
+                                {isCurrent && (
+                                  <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950 px-1.5 py-0.5 rounded border border-emerald-800">
+                                    En pantalla
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-zinc-200 leading-relaxed font-medium">
+                                {cue.text}
+                              </p>
+                            </div>
+                            {onSeekToTime && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onSeekToTime(cue.start);
+                                  showNotification(
+                                    'success',
+                                    `Reproduciendo en ${formatCueTime(cue.start)}...`
+                                  );
+                                }}
+                                className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-rose-600 hover:text-white text-zinc-400 text-[11px] font-medium transition-colors shrink-0 flex items-center gap-1 cursor-pointer"
+                                title="Saltar a este diálogo en el reproductor"
+                              >
+                                <Play className="w-2.5 h-2.5 fill-current" />
+                                <span>Saltar</span>
+                              </button>
+                            )}
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

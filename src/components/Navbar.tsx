@@ -16,6 +16,9 @@ import {
   Clock,
   Trash2,
   Lock,
+  Shield,
+  ShieldCheck,
+  QrCode,
 } from 'lucide-react';
 import { downloadProjectZip } from '../utils/exportProject';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -31,9 +34,12 @@ interface NavbarProps {
   onOpenAddMovie: () => void;
   cloudMoviesCount?: number;
   onSyncCloud?: () => void;
+  onOpenSyncModal?: () => void;
   onOpenPanicModal?: () => void;
   onLockApp?: () => void;
   stealthConfig?: PanicConfig;
+  isAdmin?: boolean;
+  onToggleAdmin?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -45,9 +51,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAddMovie,
   cloudMoviesCount = 0,
   onSyncCloud,
+  onOpenSyncModal,
   onOpenPanicModal,
   onLockApp,
   stealthConfig,
+  isAdmin = false,
+  onToggleAdmin,
 }) => {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -341,6 +350,19 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </button>
 
+          {/* Sincronizar Sesión con Móvil (Código QR) */}
+          {onOpenSyncModal && (
+            <button
+              id="navbar-sync-qr-btn"
+              onClick={onOpenSyncModal}
+              className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-rose-950/40 text-zinc-300 hover:text-rose-300 border border-zinc-800 hover:border-rose-500/40 text-xs font-semibold transition-all active:scale-95 shrink-0 cursor-pointer shadow-xs"
+              title="Sincronizar mi sesión: Transfiere tus favoritos y progreso al celular con código QR"
+            >
+              <QrCode className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+              <span className="hidden sm:inline text-[11px]">Pasar a Móvil</span>
+            </button>
+          )}
+
           {/* PWA Install Button */}
           <PWAInstallButton />
 
@@ -372,8 +394,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="md:hidden text-[11px] font-bold">ZIP</span>
           </button>
 
-          {/* Discreet Panic / Camouflage Button (ALEKS, Pearson, Beeverso) */}
-          {onOpenPanicModal && (
+          {/* Discreet Panic / Camouflage Button (Hidden when photo is added) */}
+          {onOpenPanicModal && (typeof window === 'undefined' || !localStorage.getItem('cinestream_custom_disguise_img')) && (
             <button
               onClick={onOpenPanicModal}
               className="flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-xl bg-zinc-900/80 hover:bg-amber-950/40 text-zinc-400 hover:text-amber-400 border border-zinc-800 hover:border-amber-500/40 text-xs font-semibold transition-all shrink-0"
@@ -381,6 +403,30 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <GraduationCap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500 shrink-0" />
               <span className="hidden lg:inline text-[11px]">Escape</span>
+            </button>
+          )}
+
+          {/* Admin Mode Status & Toggle */}
+          {onToggleAdmin && (
+            <button
+              onClick={onToggleAdmin}
+              className={`flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all shrink-0 cursor-pointer ${
+                isAdmin
+                  ? 'bg-rose-950/70 border-rose-600/60 text-rose-300 hover:bg-rose-900/80 shadow-xs'
+                  : 'bg-zinc-900/80 hover:bg-zinc-800 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+              }`}
+              title={
+                isAdmin
+                  ? 'Modo Administrador Activo: Puedes eliminar películas (Haz clic para salir)'
+                  : 'Acceso Administrador (Solo el admin puede eliminar películas)'
+              }
+            >
+              {isAdmin ? (
+                <ShieldCheck className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+              ) : (
+                <Shield className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+              )}
+              <span className="hidden sm:inline text-[11px]">{isAdmin ? 'Admin' : 'Admin'}</span>
             </button>
           )}
 
@@ -463,6 +509,16 @@ export const Navbar: React.FC<NavbarProps> = ({
         >
           Sugerencias
         </button>
+        {onOpenSyncModal && (
+          <button
+            onClick={onOpenSyncModal}
+            className="px-2 py-1 rounded-md text-zinc-400 hover:text-rose-400 flex items-center gap-1"
+            title="Sincronizar sesión con QR"
+          >
+            <QrCode className="w-3.5 h-3.5 text-rose-500" />
+            <span>QR</span>
+          </button>
+        )}
       </div>
     </header>
   );

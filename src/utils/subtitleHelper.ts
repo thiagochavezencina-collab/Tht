@@ -14,72 +14,275 @@ export interface SubtitleTrackData {
 }
 
 /**
- * Converts timestamp string (00:01:23.456 or 00:01:23,456 or 01:23.456) to seconds
+ * Converts timestamp string (00:01:23.456 or 00:01:23,456 or 01:23.456 or 01:23) to seconds
  */
 export function timeStringToSeconds(timeStr: string): number {
   if (!timeStr) return 0;
-  const clean = timeStr.trim().replace(',', '.');
+  // Clean invisible chars, BOMs, non-breaking spaces, and normalize comma/semicolon to dot
+  const clean = timeStr
+    .trim()
+    .replace(/[\uFEFF\u00A0]/g, '')
+    .replace(/[;\s]+$/, '')
+    .replace(/,/g, '.');
+
   const parts = clean.split(':');
   if (parts.length === 3) {
-    const hours = parseFloat(parts[0]);
-    const minutes = parseFloat(parts[1]);
-    const seconds = parseFloat(parts[2]);
-    return (hours || 0) * 3600 + (minutes || 0) * 60 + (seconds || 0);
+    const hours = parseFloat(parts[0]) || 0;
+    const minutes = parseFloat(parts[1]) || 0;
+    const seconds = parseFloat(parts[2]) || 0;
+    return hours * 3600 + minutes * 60 + seconds;
   } else if (parts.length === 2) {
-    const minutes = parseFloat(parts[0]);
-    const seconds = parseFloat(parts[1]);
-    return (minutes || 0) * 60 + (seconds || 0);
+    const minutes = parseFloat(parts[0]) || 0;
+    const seconds = parseFloat(parts[1]) || 0;
+    return minutes * 60 + seconds;
   } else {
     return parseFloat(clean) || 0;
   }
 }
 
 /**
- * Parses SRT or WebVTT subtitle files into an array of cues
+ * Strips formatting tags (HTML, ASS/SSA styles) and unescapes entities
+ */
+export function cleanSubtitleText(raw: string): string {
+  if (!raw) return '';
+  return raw
+    .replace(/\{\\?[^}]*\}/g, '') // Strip SSA/ASS override tags like {\an8}, {\c&H...}, etc.
+    .replace(/<[^>]+>/g, '') // Strip HTML tags
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Parses ASS/SSA (SubStation Alpha) script content
+ */
+function parseAssOrSsa(content: string): SubtitleCue[] {
+  const cues: SubtitleCue[] = [];
+  const lines = content.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^Dialogue:\s*/i.test(trimmed)) {
+      // Format: Dialogue: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+      const payload = trimmed.replace(/^Dialogue:\s*/i, '');
+      const parts = payload.split(',');
+      if (parts.length >= 10) {
+        const startStr = parts[1]?.trim();
+        const endStr = parts[2]?.trim();
+        const rawText = parts.slice(9).join(',');
+        const text = cleanSubtitleText(rawText.replace(/\\N/gi, '\n'));
+        const start = timeStringToSeconds(startStr);
+        let end = timeStringToSeconds(endStr);
+        if (text && !isNaN(start) && !isNaN(end)) {
+          if (end <= start) end = start + 2.0;
+          cues.push({ start, end, text });
+        }
+      }
+    }
+  }
+  return cues;
+}
+
+/**
+ * Parses MicroDVD ({100}{200}Text) format content
+ */
+function parseMicroDvd(content: string, fps: number = 24): SubtitleCue[] {
+  const cues: SubtitleCue[] = [];
+  const lines = content.split(/\r?\n/);
+  for (const line of lines) {
+    const match = line.trim().match(/^\{(\d+)\}\{(\d+)\}(.+)$/);
+    if (match) {
+      const startFrame = parseInt(match[1], 10);
+      const endFrame = parseInt(match[2], 10);
+      const rawText = match[3];
+      const text = cleanSubtitleText(rawText.replace(/\|/g, '\n'));
+      const start = startFrame / fps;
+      let end = endFrame / fps;
+      if (text && !isNaN(start) && !isNaN(end)) {
+        if (end <= start) end = start + 2.0;
+        cues.push({ start, end, text });
+      }
+    }
+  }
+  return cues;
+}
+
+/**
+ * Universal Subtitle Parser:
+ * Supports SubRip (.SRT), WebVTT (.VTT), SubStation Alpha (.ASS/.SSA), MicroDVD (.SUB), and generic timestamped subtitles.
+ * Handles files with or without blank lines, with varied timestamp arrow characters, and malformed tags.
  */
 export function parseSrtOrVtt(content: string): SubtitleCue[] {
   if (!content || typeof content !== 'string') return [];
+
+  // Remove BOM and normalize line breaks
+  const normalized = content
+    .replace(/^[\uFEFF\u00A0]+/, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
+
+  // Check for SubStation Alpha (.ass / .ssa)
+  if (normalized.includes('[Events]') || /Dialogue:\s*\d+/i.test(normalized)) {
+    const assCues = parseAssOrSsa(normalized);
+    if (assCues.length > 0) {
+      return assCues.sort((a, b) => a.start - b.start);
+    }
+  }
+
+  // Check for MicroDVD format
+  if (/^\{\d+\}\{\d+\}/m.test(normalized)) {
+    const dvdCues = parseMicroDvd(normalized);
+    if (dvdCues.length > 0) {
+      return dvdCues.sort((a, b) => a.start - b.start);
+    }
+  }
+
   const cues: SubtitleCue[] = [];
+  const lines = normalized.split('\n');
 
-  // Normalize line endings
-  const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // Regex to detect timestamp lines: e.g. "00:00:20,000 --> 00:00:24,400" or with -> or unicode arrow
+  const timeArrowRegex = /(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?)\s*(?:-->|->|→|–>|—>)\s*(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?)/;
+
+  let currentStart = -1;
+  let currentEnd = -1;
+  let currentTextLines: string[] = [];
+
+  const commitCue = () => {
+    if (currentStart >= 0 && currentEnd >= 0 && currentTextLines.length > 0) {
+      const rawText = currentTextLines.join('\n');
+      const text = cleanSubtitleText(rawText);
+      let end = currentEnd;
+      if (end <= currentStart) end = currentStart + 2.0;
+      if (text) {
+        cues.push({ start: currentStart, end, text });
+      }
+    }
+    currentStart = -1;
+    currentEnd = -1;
+    currentTextLines = [];
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) {
+      // Blank line can indicate cue boundary
+      commitCue();
+      continue;
+    }
+
+    // Ignore WebVTT header or metadata
+    if (/^WEBVTT/i.test(line) || /^NOTE\b/i.test(line) || /^STYLE\b/i.test(line) || /^REGION\b/i.test(line)) {
+      continue;
+    }
+
+    const arrowMatch = line.match(timeArrowRegex);
+    if (arrowMatch) {
+      // If we already had a cue in progress, commit it before starting the new one
+      commitCue();
+      currentStart = timeStringToSeconds(arrowMatch[1]);
+      currentEnd = timeStringToSeconds(arrowMatch[2]);
+      continue;
+    }
+
+    // If we have an active time window, accumulate text
+    if (currentStart >= 0) {
+      currentTextLines.push(line);
+    } else {
+      // If no active time window yet, check if this line is just a numeric index (e.g. "1")
+      // which commonly precedes a timestamp line in SRT
+      if (/^\d+$/.test(line) && i + 1 < lines.length && timeArrowRegex.test(lines[i + 1])) {
+        // Skip cue number
+        continue;
+      }
+    }
+  }
+
+  // Commit last cue if pending
+  commitCue();
+
+  // If line-by-line found cues, sort and return
+  if (cues.length > 0) {
+    return cues.sort((a, b) => a.start - b.start);
+  }
+
+  // Secondary Fallback: Block-based parser for non-standard formats
   const blocks = normalized.split(/\n\s*\n/);
-
   for (const block of blocks) {
-    const lines = block
-      .trim()
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean);
-    if (lines.length === 0) continue;
+    const blockLines = block.trim().split('\n').map((l) => l.trim()).filter(Boolean);
+    if (blockLines.length === 0) continue;
 
-    // Look for the line containing "-->"
-    const arrowLineIndex = lines.findIndex((l) => l.includes('-->'));
+    const arrowLineIndex = blockLines.findIndex((l) => l.includes('-->') || l.includes('->') || l.includes('→'));
     if (arrowLineIndex === -1) continue;
 
-    const arrowLine = lines[arrowLineIndex];
-    const [startRaw, endRaw] = arrowLine.split('-->').map((s) => s.trim());
-    if (!startRaw || !endRaw) continue;
+    const arrowLine = blockLines[arrowLineIndex];
+    const match = arrowLine.match(timeArrowRegex);
+    if (!match) continue;
 
-    // Strip out WebVTT cue settings like line:90% position:50% align:center
-    const cleanEndStr = endRaw.split(/\s+/)[0];
+    const start = timeStringToSeconds(match[1]);
+    let end = timeStringToSeconds(match[2]);
+    if (end <= start) end = start + 2.0;
 
-    const start = timeStringToSeconds(startRaw);
-    const end = timeStringToSeconds(cleanEndStr);
+    const textLines = blockLines.slice(arrowLineIndex + 1);
+    const text = cleanSubtitleText(textLines.join('\n'));
 
-    // Everything after the arrow line is subtitle text
-    const textLines = lines.slice(arrowLineIndex + 1);
-    const text = textLines
-      .join('\n')
-      .replace(/<[^>]+>/g, '') // remove formatting tags
-      .trim();
-
-    if (text && !isNaN(start) && !isNaN(end) && end >= start) {
+    if (text && !isNaN(start) && !isNaN(end)) {
       cues.push({ start, end, text });
     }
   }
 
-  return cues;
+  return cues.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * Decodes binary file data with intelligent multi-encoding detection:
+ * Handles UTF-16 LE, UTF-16 BE, UTF-8 (with/without BOM), and Windows-1252 / ISO-8859-1 (standard for Spanish subtitles).
+ */
+export function decodeSubtitleBuffer(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length === 0) return '';
+
+  // 1. Check for UTF-16 LE BOM (0xFF, 0xFE)
+  if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+    try {
+      return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+    } catch {
+      // fallback
+    }
+  }
+
+  // 2. Check for UTF-16 BE BOM (0xFE, 0xFF)
+  if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) {
+    try {
+      return new TextDecoder('utf-16be').decode(bytes.subarray(2));
+    } catch {
+      // fallback
+    }
+  }
+
+  // 3. Strip UTF-8 BOM (0xEF, 0xBB, 0xBF)
+  let sliceStart = 0;
+  if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+    sliceStart = 3;
+  }
+
+  // 4. Try strict UTF-8
+  try {
+    const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+    return utf8Decoder.decode(bytes.subarray(sliceStart));
+  } catch {
+    // 5. Fallback to Windows-1252 / ANSI (predominant for Latin/Spanish subtitle downloads)
+    try {
+      const winDecoder = new TextDecoder('windows-1252');
+      return winDecoder.decode(bytes.subarray(sliceStart));
+    } catch {
+      // 6. Generic UTF-8 non-fatal
+      return new TextDecoder('utf-8').decode(bytes.subarray(sliceStart));
+    }
+  }
 }
 
 /**
@@ -91,7 +294,8 @@ export async function loadSubtitlesFromUrl(url: string): Promise<SubtitleCue[]> 
     if (!response.ok) {
       throw new Error(`Error al descargar subtítulos: ${response.statusText}`);
     }
-    const text = await response.text();
+    const buffer = await response.arrayBuffer();
+    const text = decodeSubtitleBuffer(buffer);
     return parseSrtOrVtt(text);
   } catch (err) {
     console.error('Error fetching subtitles:', err);
@@ -100,23 +304,33 @@ export async function loadSubtitlesFromUrl(url: string): Promise<SubtitleCue[]> 
 }
 
 /**
- * Reads a File (.srt or .vtt) uploaded from user device and returns parsed cues
+ * Reads a File (.srt, .vtt, .ass, .sub, .txt) uploaded from user device and returns parsed cues
  */
-export function readSubtitleFile(file: File): Promise<{ fileName: string; cues: SubtitleCue[] }> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const content = (e.target?.result as string) || '';
-        const cues = parseSrtOrVtt(content);
-        resolve({ fileName: file.name, cues });
-      } catch (err) {
-        reject(err);
-      }
-    };
-    reader.onerror = () => reject(new Error('No se pudo leer el archivo de subtítulos'));
-    reader.readAsText(file, 'utf-8');
-  });
+export async function readSubtitleFile(file: File): Promise<{ fileName: string; cues: SubtitleCue[] }> {
+  let content = '';
+  try {
+    if (typeof file.arrayBuffer === 'function') {
+      const buffer = await file.arrayBuffer();
+      content = decodeSubtitleBuffer(buffer);
+    } else {
+      content = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve((e.target?.result as string) || '');
+        reader.onerror = () => reject(new Error('No se pudo leer el archivo de subtítulos'));
+        reader.readAsText(file, 'utf-8');
+      });
+    }
+  } catch {
+    content = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve((e.target?.result as string) || '');
+      reader.onerror = () => reject(new Error('No se pudo leer el archivo de subtítulos'));
+      reader.readAsText(file, 'utf-8');
+    });
+  }
+
+  const cues = parseSrtOrVtt(content);
+  return { fileName: file.name, cues };
 }
 
 /**
@@ -334,6 +548,85 @@ export function detectSubtitleLanguage(
     confidence,
     flag: chosen.flag,
   };
+}
+
+/**
+ * Format seconds into SRT timestamp format: HH:MM:SS,mmm
+ */
+export function formatSrtTimestamp(seconds: number): string {
+  const safeSec = Math.max(0, isNaN(seconds) ? 0 : seconds);
+  const hrs = Math.floor(safeSec / 3600);
+  const mins = Math.floor((safeSec % 3600) / 60);
+  const secs = Math.floor(safeSec % 60);
+  const millis = Math.floor((safeSec % 1) * 1000);
+
+  const hh = String(hrs).padStart(2, '0');
+  const mm = String(mins).padStart(2, '0');
+  const ss = String(secs).padStart(2, '0');
+  const mmm = String(millis).padStart(3, '0');
+
+  return `${hh}:${mm}:${ss},${mmm}`;
+}
+
+/**
+ * Format seconds into WebVTT timestamp format: HH:MM:SS.mmm
+ */
+export function formatVttTimestamp(seconds: number): string {
+  return formatSrtTimestamp(seconds).replace(',', '.');
+}
+
+/**
+ * Exports an array of cues to standard SubRip (.SRT) string
+ */
+export function exportCuesToSrt(cues: SubtitleCue[]): string {
+  return cues
+    .map((cue, index) => {
+      const idx = index + 1;
+      const start = formatSrtTimestamp(cue.start);
+      const end = formatSrtTimestamp(cue.end);
+      return `${idx}\n${start} --> ${end}\n${cue.text}\n`;
+    })
+    .join('\n');
+}
+
+/**
+ * Exports an array of cues to standard WebVTT (.VTT) string
+ */
+export function exportCuesToVtt(cues: SubtitleCue[]): string {
+  const cuesBody = cues
+    .map((cue, index) => {
+      const idx = index + 1;
+      const start = formatVttTimestamp(cue.start);
+      const end = formatVttTimestamp(cue.end);
+      return `${idx}\n${start} --> ${end}\n${cue.text}\n`;
+    })
+    .join('\n');
+  return `WEBVTT - Generado por CineStream\n\n${cuesBody}`;
+}
+
+/**
+ * Prompts immediate download of subtitle cues as .srt or .vtt file
+ */
+export function downloadSubtitleFile(
+  cues: SubtitleCue[],
+  baseFileName: string = 'subtitulos',
+  format: 'srt' | 'vtt' = 'srt'
+): void {
+  if (!cues || cues.length === 0) return;
+  const content = format === 'srt' ? exportCuesToSrt(cues) : exportCuesToVtt(cues);
+  const mimeType = format === 'srt' ? 'application/x-subrip' : 'text/vtt';
+  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+  const cleanName = baseFileName.replace(/[^\w\s.-]/gi, '_').trim() || 'subtitulos';
+  const filename = `${cleanName}.${format}`;
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 

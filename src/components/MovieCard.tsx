@@ -108,8 +108,8 @@ export const MovieCard: React.FC<MovieCardProps> = ({
                   e.stopPropagation();
                   onDelete(movie);
                 }}
-                className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg bg-zinc-900/90 hover:bg-rose-950/80 border border-zinc-700 hover:border-rose-700 text-zinc-400 hover:text-rose-400 text-[11px] font-semibold transition-colors"
-                title="Eliminar película o serie"
+                className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg bg-zinc-900/90 hover:bg-rose-950/80 border border-zinc-700 hover:border-rose-700 text-zinc-400 hover:text-rose-400 text-[11px] font-semibold transition-colors cursor-pointer"
+                title="Eliminar película (Solo Administrador)"
               >
                 <Trash2 className="w-3 h-3" />
               </button>

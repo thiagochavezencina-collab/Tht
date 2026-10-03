@@ -18,7 +18,7 @@ import {
   History,
 } from 'lucide-react';
 import { useSearchHistory } from './hooks/useSearchHistory';
-import { Movie, WatchProgress, UserReview, MovieSuggestion } from './types';
+import { Movie, WatchProgress, UserReview, MovieSuggestion, CurrentPlayingState } from './types';
 import { INITIAL_MOVIES, INITIAL_REVIEWS, INITIAL_SUGGESTIONS, GENRES } from './data/movies';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';
@@ -34,6 +34,9 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 import { PanicModal, PanicConfig, DEFAULT_PANIC_CONFIG } from './components/PanicModal';
 import { DisguiseScreen } from './components/DisguiseScreen';
 import { PinLockScreen } from './components/PinLockScreen';
+import { AdminPinModal } from './components/AdminPinModal';
+import { SyncSessionModal } from './components/SyncSessionModal';
+import { SyncBannerPrompt } from './components/SyncBannerPrompt';
 import { applyStealthMeta } from './utils/stealthHelper';
 import {
   saveMovieToFirestore,
@@ -50,6 +53,8 @@ import {
   deleteSuggestionFromFirestore,
   updateSuggestionStatusInFirestore,
   purgeMockSuggestionsFromFirestore,
+  getSyncSessionFromFirestore,
+  markSyncSessionTransferredInFirestore,
 } from './firestoreService';
 import { deleteVideoBlob } from './utils/videoStorage';
 
@@ -171,6 +176,50 @@ export default function App() {
   const [isAddMovieModalOpen, setIsAddMovieModalOpen] = useState(false);
   const [editingMovie, setEditingMovie] = useState<Movie | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+  // QR Session Sync State (Laptop <-> Mobile)
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [currentPlayingForSync, setCurrentPlayingForSync] = useState<CurrentPlayingState | null>(null);
+  const [importedSyncResult, setImportedSyncResult] = useState<{
+    favoritesCount: number;
+    progressCount: number;
+    currentPlaying?: CurrentPlayingState | null;
+  } | null>(null);
+
+  // Admin Mode state (only admin can delete movies)
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
+    return localStorage.getItem('cinestream_admin_mode') === 'true';
+  });
+  const [isAdminPinModalOpen, setIsAdminPinModalOpen] = useState(false);
+  const [pendingDeleteMovie, setPendingDeleteMovie] = useState<Movie | null>(null);
+
+  const handleToggleAdmin = () => {
+    if (isAdmin) {
+      if (confirm('¿Deseas cerrar la sesión de administrador?')) {
+        setIsAdmin(false);
+        try {
+          localStorage.removeItem('cinestream_admin_mode');
+        } catch {}
+        showToast('🔒 Sesión de administrador cerrada.');
+      }
+    } else {
+      setPendingDeleteMovie(null);
+      setIsAdminPinModalOpen(true);
+    }
+  };
+
+  const handleAdminSuccess = () => {
+    setIsAdmin(true);
+    try {
+      localStorage.setItem('cinestream_admin_mode', 'true');
+    } catch {}
+    showToast('🛡️ Modo Administrador activado.');
+    if (pendingDeleteMovie) {
+      const movieToRemove = pendingDeleteMovie;
+      setPendingDeleteMovie(null);
+      executeDeleteMovie(movieToRemove);
+    }
+  };
 
   // Discreet / Panic Escape Config (LanSchool / Quick exit to ALEKS, Pearson, Beeverso)
   const [panicConfig, setPanicConfig] = useState<PanicConfig>(() => {
@@ -312,6 +361,137 @@ export default function App() {
       showToast(`☁️ Sincronización en la nube completa (${cloudMovies.length} títulos en la nube)`);
     } catch {
       showToast('⚠️ No se pudo conectar a la nube en este momento');
+    }
+  };
+
+  // QR Session Sync: Check URL parameters on mount (when scanned from laptop)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const syncCodeParam = urlParams.get('syncCode');
+    const payloadParam = urlParams.get('p');
+
+    if (syncCodeParam || payloadParam) {
+      const handleIncomingSync = async () => {
+        let importedWl: string[] = [];
+        let importedProgress: Record<string, WatchProgress> = {};
+        let importedCp: CurrentPlayingState | null = null;
+
+        // 1. Try compact fast base64 payload (works instantly even offline)
+        if (payloadParam) {
+          try {
+            const json = decodeURIComponent(escape(window.atob(payloadParam)));
+            const data = JSON.parse(json);
+            if (Array.isArray(data.wl)) importedWl = data.wl;
+            if (data.wp && typeof data.wp === 'object') importedProgress = data.wp;
+            if (data.cp) importedCp = data.cp;
+          } catch (e) {
+            console.warn('Error reading sync payload param:', e);
+          }
+        }
+
+        // 2. Try Firestore sync session if code present
+        if (syncCodeParam) {
+          try {
+            const session = await getSyncSessionFromFirestore(syncCodeParam);
+            if (session) {
+              if (Array.isArray(session.watchlist) && session.watchlist.length > 0) {
+                importedWl = Array.from(new Set([...importedWl, ...session.watchlist]));
+              }
+              if (session.watchProgress) {
+                try {
+                  const parsed = JSON.parse(session.watchProgress);
+                  importedProgress = { ...importedProgress, ...parsed };
+                } catch {}
+              }
+              if (session.currentPlaying) {
+                importedCp = session.currentPlaying;
+              }
+              await markSyncSessionTransferredInFirestore(session.id);
+            }
+          } catch (e) {
+            console.warn('Error fetching Firestore sync session:', e);
+          }
+        }
+
+        if (importedWl.length > 0 || Object.keys(importedProgress).length > 0 || importedCp) {
+          // Merge into state and localStorage
+          setWatchlist((prev) => {
+            const merged = Array.from(new Set([...prev, ...importedWl]));
+            try {
+              localStorage.setItem('cinestream_watchlist', JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
+
+          setWatchProgressMap((prev) => {
+            const merged = { ...prev, ...importedProgress };
+            try {
+              localStorage.setItem('cinestream_progress', JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
+
+          setImportedSyncResult({
+            favoritesCount: importedWl.length,
+            progressCount: Object.keys(importedProgress).length,
+            currentPlaying: importedCp,
+          });
+
+          showToast('📱 ¡Sesión transferida exitosamente desde tu Laptop!');
+        }
+
+        // Clean up URL query parameters without reloading
+        try {
+          const cleanUrl = window.location.pathname;
+          window.history.replaceState({}, document.title, cleanUrl);
+        } catch {}
+      };
+
+      handleIncomingSync();
+    }
+  }, []);
+
+  // Handle manual session import (from code or QR)
+  const handleImportSession = (
+    importedWl: string[],
+    importedProgress: Record<string, WatchProgress>,
+    importedCp?: CurrentPlayingState | null
+  ) => {
+    setWatchlist((prev) => {
+      const merged = Array.from(new Set([...prev, ...importedWl]));
+      try {
+        localStorage.setItem('cinestream_watchlist', JSON.stringify(merged));
+      } catch {}
+      return merged;
+    });
+
+    setWatchProgressMap((prev) => {
+      const merged = { ...prev, ...importedProgress };
+      try {
+        localStorage.setItem('cinestream_progress', JSON.stringify(merged));
+      } catch {}
+      return merged;
+    });
+
+    setImportedSyncResult({
+      favoritesCount: importedWl.length,
+      progressCount: Object.keys(importedProgress).length,
+      currentPlaying: importedCp,
+    });
+
+    showToast('📱 ¡Sesión sincronizada y favoritos actualizados!');
+  };
+
+  // Continue watching on mobile from laptop position
+  const handleContinueWatchingSync = (cp: CurrentPlayingState) => {
+    const targetMovie = allMovies.find((m) => m.id === cp.movieId);
+    if (targetMovie) {
+      setActivePlayerMovie(targetMovie);
+      setImportedSyncResult(null);
+    } else {
+      showToast(`Abriendo ${cp.title}...`);
     }
   };
 
@@ -590,8 +770,21 @@ export default function App() {
     }
   };
 
-  // Handler: Delete Movie or Series
-  const handleDeleteMovie = async (movieToDelete: Movie) => {
+  // Protected Handler: Delete Movie or Series (ONLY ADMIN)
+  const handleDeleteMovie = (movieToDelete: Movie) => {
+    if (!isAdmin) {
+      setPendingDeleteMovie(movieToDelete);
+      setIsAdminPinModalOpen(true);
+      return;
+    }
+
+    if (confirm(`¿Estás seguro de que deseas eliminar permanentemente "${movieToDelete.title}"?`)) {
+      executeDeleteMovie(movieToDelete);
+    }
+  };
+
+  // Core execution of movie deletion (executed only after admin authorization)
+  const executeDeleteMovie = async (movieToDelete: Movie) => {
     // 1. Track deleted id in state and localStorage
     setDeletedMovieIds((prev) => {
       const next = [...prev, movieToDelete.id];
@@ -798,9 +991,33 @@ export default function App() {
         onOpenAddMovie={() => setIsAddMovieModalOpen(true)}
         cloudMoviesCount={firestoreMovies.length}
         onSyncCloud={handleManualSync}
+        onOpenSyncModal={() => {
+          if (activePlayerMovie) {
+            const prog = watchProgressMap[activePlayerMovie.id];
+            setCurrentPlayingForSync({
+              movieId: activePlayerMovie.id,
+              title: activePlayerMovie.title,
+              currentTime: prog?.currentTime || 0,
+              duration: prog?.duration || 0,
+            });
+          } else if (miniPlayerMovie) {
+            const prog = watchProgressMap[miniPlayerMovie.id];
+            setCurrentPlayingForSync({
+              movieId: miniPlayerMovie.id,
+              title: miniPlayerMovie.title,
+              currentTime: prog?.currentTime || 0,
+              duration: prog?.duration || 0,
+            });
+          } else {
+            setCurrentPlayingForSync(null);
+          }
+          setIsSyncModalOpen(true);
+        }}
         onOpenPanicModal={() => setIsPanicModalOpen(true)}
         onLockApp={handleLockApp}
         stealthConfig={panicConfig}
+        isAdmin={isAdmin}
+        onToggleAdmin={handleToggleAdmin}
       />
 
       {/* Main Content Area */}
@@ -1427,6 +1644,10 @@ export default function App() {
             setMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
             setActivePlayerMovie(updated);
           }}
+          onOpenSync={(playingState) => {
+            setCurrentPlayingForSync(playingState);
+            setIsSyncModalOpen(true);
+          }}
         />
       )}
 
@@ -1460,8 +1681,24 @@ export default function App() {
           progress={watchProgressMap[detailModalMovie.id]}
           onEdit={handleOpenEdit}
           onDelete={handleDeleteMovie}
+          isAdmin={isAdmin}
         />
       )}
+
+      {/* ADMIN PIN VERIFICATION MODAL */}
+      <AdminPinModal
+        isOpen={isAdminPinModalOpen}
+        onClose={() => {
+          setIsAdminPinModalOpen(false);
+          setPendingDeleteMovie(null);
+        }}
+        onSuccess={handleAdminSuccess}
+        actionDescription={
+          pendingDeleteMovie
+            ? `eliminar "${pendingDeleteMovie.title}"`
+            : 'acceder a las funciones de administrador'
+        }
+      />
 
       {/* ADD CUSTOM MOVIE MODAL */}
       {isAddMovieModalOpen && (
@@ -1491,6 +1728,28 @@ export default function App() {
           <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0 shadow-sm shadow-emerald-500/50 animate-pulse" />
           <span className="text-xs sm:text-sm font-medium leading-snug">{toastMessage}</span>
         </div>
+      )}
+
+      {/* QR SESSION SYNC MODAL (LAPTOP TO MOBILE) */}
+      <SyncSessionModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        watchlist={watchlist}
+        watchProgressMap={watchProgressMap}
+        movies={allMovies}
+        currentPlaying={currentPlayingForSync}
+        onImportSession={handleImportSession}
+      />
+
+      {/* MOBILE SYNC BANNER NOTIFICATION (After scanning QR on mobile) */}
+      {importedSyncResult && (
+        <SyncBannerPrompt
+          importedFavoritesCount={importedSyncResult.favoritesCount}
+          importedProgressCount={importedSyncResult.progressCount}
+          currentPlaying={importedSyncResult.currentPlaying}
+          onContinueWatching={handleContinueWatchingSync}
+          onDismiss={() => setImportedSyncResult(null)}
+        />
       )}
 
       {/* PWA Offline Mode Network Banner */}

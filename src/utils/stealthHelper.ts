@@ -7,6 +7,9 @@ const PLATFORM_TITLES: Record<string, string> = {
   pearson: 'Pearson MyLab - Student Learning Portal',
   beeverso: 'Beereaders - Biblioteca Digital y Comprensión',
   classroom: 'Google Classroom - Tareas y Recursos',
+  docs: 'Documento sin título - Google Docs',
+  wikipedia: 'Investigación Académica y Métodos Científicos - Wikipedia',
+  lanschool: 'Portal Escolar - Tarea en Línea e Investigación',
   custom: 'Portal de Aprendizaje Digital Institucional',
 };
 
@@ -21,6 +24,10 @@ const getFaviconSvgDataUri = (platform: string): string => {
     svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#059669"/><path d="M20 18 L30 18 C36 18 40 21 40 25 C40 28 38 30 34 31 C39 32 42 35 42 39 C42 44 37 47 30 47 L20 47 Z M28 24 L28 29 L30 29 C33 29 34 28 34 26 C34 25 33 24 30 24 Z M28 35 L28 41 L31 41 C34 41 35 40 35 38 C35 36 34 35 31 35 Z" fill="#ffffff"/></svg>`;
   } else if (platform === 'classroom') {
     svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#137333"/><rect x="14" y="14" width="36" height="36" rx="8" fill="#f9ab00"/><rect x="18" y="18" width="28" height="28" rx="6" fill="#137333"/><circle cx="32" cy="27" r="4" fill="#ffffff"/><path d="M24 40 C24 35 27 33 32 33 C37 33 40 35 40 40 Z" fill="#ffffff"/></svg>`;
+  } else if (platform === 'docs') {
+    svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#4285f4"/><rect x="16" y="14" width="32" height="36" rx="4" fill="#ffffff"/><line x1="22" y1="24" x2="38" y2="24" stroke="#4285f4" stroke-width="3" stroke-linecap="round"/><line x1="22" y1="30" x2="42" y2="30" stroke="#90b4f8" stroke-width="3" stroke-linecap="round"/><line x1="22" y1="36" x2="36" y2="36" stroke="#90b4f8" stroke-width="3" stroke-linecap="round"/></svg>`;
+  } else if (platform === 'wikipedia') {
+    svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#f8f9fa" stroke="#a2a9b1" stroke-width="2"/><text x="32" y="44" font-size="34" font-family="serif" text-anchor="middle" font-weight="bold" fill="#202122">W</text></svg>`;
   } else {
     svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#16a34a"/><rect x="18" y="22" width="28" height="20" rx="4" fill="#ffffff"/><circle cx="32" cy="32" r="4" fill="#16a34a"/></svg>`;
   }

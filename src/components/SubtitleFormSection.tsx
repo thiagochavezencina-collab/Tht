@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
-import { Subtitles, Upload, Trash2, Plus, Check, FileText } from 'lucide-react';
+import { Subtitles, Upload, Trash2, Plus, Check, FileText, AlertCircle } from 'lucide-react';
 import { SubtitleTrack } from '../types';
-import { readSubtitleFile } from '../utils/subtitleHelper';
+import { readSubtitleFile, detectSubtitleLanguage } from '../utils/subtitleHelper';
 
 interface SubtitleFormSectionProps {
   subtitles: SubtitleTrack[];
@@ -16,7 +16,13 @@ export const SubtitleFormSection: React.FC<SubtitleFormSectionProps> = ({
   const [newLang, setNewLang] = useState('es');
   const [newUrl, setNewUrl] = useState('');
   const [isProcessingFile, setIsProcessingFile] = useState(false);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const showNotice = (type: 'success' | 'error', text: string) => {
+    setFeedback({ type, text });
+    setTimeout(() => setFeedback(null), 5000);
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -25,20 +31,32 @@ export const SubtitleFormSection: React.FC<SubtitleFormSectionProps> = ({
     setIsProcessingFile(true);
     try {
       const { fileName, cues } = await readSubtitleFile(file);
-      const isSpanish = /es|esp|spa|lat/i.test(fileName);
-      const detectedLang = isSpanish ? 'es' : 'en';
+      if (cues.length === 0) {
+        showNotice(
+          'error',
+          'El archivo no contiene subtítulos o marcas de tiempo válidas (.srt, .vtt, .ass).'
+        );
+        return;
+      }
+
+      const detected = detectSubtitleLanguage(cues, fileName);
+      const cleanName = fileName.replace(/\.[^/.]+$/, '');
 
       const newTrack: SubtitleTrack = {
         id: `sub-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-        lang: detectedLang,
-        label: fileName.replace(/\.[^/.]+$/, ''),
+        lang: detected.lang,
+        label: `${cleanName} [${detected.flag} ${detected.languageName}]`,
         fileName,
         cues,
       };
 
       onChange([...subtitles, newTrack]);
+      showNotice(
+        'success',
+        `✨ Subtítulo agregado: ${cues.length} líneas detectadas (${detected.flag} ${detected.languageName}).`
+      );
     } catch (err: any) {
-      alert(err?.message || 'Error al leer el archivo de subtítulos');
+      showNotice('error', err?.message || 'Error al leer el archivo de subtítulos');
     } finally {
       setIsProcessingFile(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -74,6 +92,23 @@ export const SubtitleFormSection: React.FC<SubtitleFormSectionProps> = ({
         </div>
         <span className="text-[11px] text-zinc-500">Opcional</span>
       </div>
+
+      {feedback && (
+        <div
+          className={`p-2.5 rounded-xl flex items-center gap-2 text-xs font-medium animate-fade-in ${
+            feedback.type === 'success'
+              ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800'
+              : 'bg-rose-950/80 text-rose-300 border border-rose-800'
+          }`}
+        >
+          {feedback.type === 'success' ? (
+            <Check className="w-4 h-4 flex-shrink-0" />
+          ) : (
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          )}
+          <span>{feedback.text}</span>
+        </div>
+      )}
 
       {/* Existing subtitles list */}
       {subtitles.length > 0 && (

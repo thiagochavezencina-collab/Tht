@@ -175,6 +175,46 @@
         }
       },
       "required": ["id", "title", "suggestedBy"]
+    },
+    "SyncSession": {
+      "title": "SyncSession",
+      "description": "Sesión temporal para transferir progreso y favoritos de laptop a celular mediante código QR.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Código de sincronización de 6 a 8 caracteres"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Timestamp de creación"
+        },
+        "expiresAt": {
+          "type": "number",
+          "description": "Timestamp de expiración en 30 minutos"
+        },
+        "watchlist": {
+          "type": "array",
+          "description": "Lista de IDs de películas en favoritos"
+        },
+        "watchProgress": {
+          "type": "string",
+          "description": "JSON serializado del mapa de progreso de visualización"
+        },
+        "currentPlaying": {
+          "type": "object",
+          "description": "Información de la película o serie activa en reproducción"
+        },
+        "status": {
+          "type": "string",
+          "description": "Estado: pending o transferred"
+        },
+        "deviceOrigin": {
+          "type": "string",
+          "description": "Tipo de dispositivo emisor"
+        }
+      },
+      "required": ["id", "createdAt", "expiresAt", "status"]
     }
   },
   "firestore": {
@@ -195,6 +235,12 @@
         "$ref": "#/entities/MovieSuggestion"
       },
       "description": "Colección de sugerencias y peticiones de la comunidad"
+    },
+    "/sync_sessions/{sessionId}": {
+      "schema": {
+        "$ref": "#/entities/SyncSession"
+      },
+      "description": "Sesiones temporales de sincronización por código QR para transferir a móvil"
     }
   }
 }

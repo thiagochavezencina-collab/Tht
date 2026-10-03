@@ -89,3 +89,24 @@ export interface MovieSuggestion {
 }
 
 export type PlayerMode = 'modal' | 'theater' | 'mini' | 'fullscreen';
+
+export interface CurrentPlayingState {
+  movieId: string;
+  title: string;
+  posterUrl?: string;
+  currentTime: number;
+  duration: number;
+  episodeId?: string;
+  episodeTitle?: string;
+}
+
+export interface SyncSession {
+  id: string;
+  createdAt: number;
+  expiresAt: number;
+  watchlist: string[];
+  watchProgress: string; // JSON Record<string, WatchProgress>
+  currentPlaying?: CurrentPlayingState | null;
+  status: 'pending' | 'transferred';
+  deviceOrigin?: string;
+}

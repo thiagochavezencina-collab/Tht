@@ -5,7 +5,7 @@ import { PearsonView } from './disguise/PearsonView';
 import { BeeversoView } from './disguise/BeeversoView';
 import { ClassroomView } from './disguise/ClassroomView';
 import { DisguiseLoginView } from './disguise/DisguiseLoginView';
-import { ScreenshotOverlayView } from './disguise/ScreenshotOverlayView';
+import { ScreenshotOverlayView, CUSTOM_DISGUISE_IMAGE_KEY } from './disguise/ScreenshotOverlayView';
 import { applyStealthMeta } from '../utils/stealthHelper';
 import { APP_PIN_STORAGE_KEY, DEFAULT_APP_PIN } from './PinLockScreen';
 import { X, Layers, LogOut, Check, KeyRound, ImageIcon } from 'lucide-react';
@@ -16,20 +16,27 @@ interface DisguiseScreenProps {
 }
 
 export const DisguiseScreen: React.FC<DisguiseScreenProps> = ({ config, onExitDisguise }) => {
-  const initialPlatform =
-    config.destination === 'pearson'
-      ? 'pearson'
-      : config.destination === 'beeverso'
-      ? 'beeverso'
-      : config.destination === 'classroom'
-      ? 'classroom'
-      : 'aleks';
+  const hasCustomPhoto = typeof window !== 'undefined' && !!localStorage.getItem(CUSTOM_DISGUISE_IMAGE_KEY);
+
+  const initialPlatform = hasCustomPhoto
+    ? 'aleks'
+    : config.destination === 'pearson'
+    ? 'pearson'
+    : config.destination === 'beeverso'
+    ? 'beeverso'
+    : config.destination === 'classroom'
+    ? 'classroom'
+    : 'aleks';
 
   const [currentPlatform, setCurrentPlatform] = useState<'aleks' | 'pearson' | 'beeverso' | 'classroom'>(
     initialPlatform
   );
   const [viewMode, setViewMode] = useState<'study' | 'login' | 'overlay'>(
-    config.disguiseType === 'screenshot_overlay' ? 'overlay' : 'study'
+    hasCustomPhoto || config.disguiseType === 'interactive' || config.destination === 'aleks'
+      ? 'study'
+      : config.disguiseType === 'screenshot_overlay'
+      ? 'overlay'
+      : 'study'
   );
   const [showSafariTabs, setShowSafariTabs] = useState(false);
   const keySequenceRef = useRef<string>('');

@@ -341,7 +341,15 @@ export const PanicModal: React.FC<PanicModalProps> = ({
                           if (base64) {
                             try {
                               localStorage.setItem(CUSTOM_DISGUISE_IMAGE_KEY, base64);
-                              setLocalConfig({ ...localConfig, disguiseType: 'screenshot_overlay' });
+                              const updatedConfig: PanicConfig = {
+                                ...localConfig,
+                                destination: 'aleks',
+                                action: 'disguise',
+                                disguiseType: 'interactive',
+                              };
+                              setLocalConfig(updatedConfig);
+                              onSaveConfig(updatedConfig);
+                              onTriggerPanic();
                             } catch {}
                           }
                         };
